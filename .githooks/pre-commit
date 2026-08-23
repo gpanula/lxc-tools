@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Git pre-commit hook
+# Prevents direct commits to the 'main' branch to enforce branch hygiene.
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null)"
+
+if [ "$branch" = "main" ]; then
+    if [ "$ALLOW_MAIN_COMMIT" != "1" ]; then
+        echo "⛔ [Branch Guard] Direct commits to the 'main' branch are prohibited!"
+        echo "   Please create a feature branch before committing:"
+        echo "     git checkout -b feat/<your-topic>"
+        echo "   (To override in an absolute emergency: ALLOW_MAIN_COMMIT=1 git commit ...)"
+        exit 1
+    fi
+fi
+
+exit 0

@@ -1,0 +1,280 @@
+#!/bin/bash
+
+# ==============================================================================
+# LXC Unprivileged Container Creator with Secure Bind Mounts & ZFS Support
+# ==============================================================================
+#
+# SETUP INSTRUCTIONS (Run as root once):
+# 1. Groups:      sudo groupadd lxc-admin; sudo groupadd lxc-users
+# 2. Project Dir: sudo mkdir -p /opt/project; sudo chown root:lxc-users /opt/project; sudo chmod 2775 /opt/project
+# 3. ZFS Paths:   sudo zfs create <pool>/lxc/privileged; sudo zfs create <pool>/lxc/unprivileged
+# 4. ZFS Allow:   sudo zfs allow -g lxc-users create,destroy,mount,snapshot,quota,promote,rename,rollback,clone,mountpoint,canmount,userprop <pool>/lxc/unprivileged
+# 5. ID Mapping:  echo "$(whoami):$(id -u):1" | sudo tee -a /etc/subuid /etc/subgid
+# 6. Sudoers:     echo "%lxc-users ALL=(ALL) NOPASSWD: /usr/local/bin/create-lxc-project, /usr/local/bin/remove-lxc-project, /usr/local/bin/list-lxc-projects, /usr/local/bin/start-lxc-project, /usr/local/bin/stop-lxc-project, /usr/local/bin/restart-lxc-project" | sudo tee /etc/sudoers.d/lxc-automation
+# 7. Config:      Copy lxc-tools.conf.example to /etc/lxc-tools/lxc-tools.conf and customize for your environment.
+#
+# This script automates the creation of an unprivileged container for members
+# of the 'lxc-users' group.
+# ==============================================================================
+
+# Exit on error
+set -e
+
+# Help function
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") <container_name> [distro] [release] [arch] [quota]
+
+Automates the creation of unprivileged LXC containers with ZFS backing and
+secure bind mounts to /opt/project.
+
+ARGUMENTS:
+  container_name    Name of the container to create (required).
+  distro            Distribution name (default: ubuntu).
+  release           Release codename or "lts" (default: lts).
+  arch              Architecture (default: amd64).
+  quota             ZFS disk quota for the container (e.g., 20G, default: 10G).
+
+SHORTHAND:
+  If the 4th argument ends with a size suffix (e.g., 64G), it is treated as
+  the quota and the architecture defaults to amd64.
+
+LTS RESOLUTION ("lts" keyword):
+  ubuntu            Resolves to latest LTS via ubuntu-distro-info.
+  debian            Resolves to latest stable via debian-distro-info.
+  alpine            Resolves to highest numerical version in LXC list.
+  rockylinux        Resolves to highest numerical version in LXC list.
+  almalinux         Resolves to highest numerical version in LXC list.
+
+EXAMPLES:
+  $(basename "$0") my-project
+  $(basename "$0") my-debian debian lts
+  $(basename "$0") my-alpine alpine lts
+  $(basename "$0") heavy-app ubuntu lts amd64 50G
+  $(basename "$0") heavy-app ubuntu lts 64G
+EOF
+}
+
+# Check for help flags (before auto-sudo)
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# AUTO-SUDO LOGIC
+# ------------------------------------------------------------------------------
+# Re-run this script with sudo if not already root
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo "$0" "$@"
+fi
+
+# Determine the target user (the person who called sudo)
+CURRENT_USER="${SUDO_USER:-$(whoami)}"
+USER_GID=$(id -u "$CURRENT_USER")
+USER_HOME=$(eval echo "~$CURRENT_USER")
+
+# Security check: User must be in lxc-users group (unless root)
+if [ "$CURRENT_USER" != "root" ] && ! groups "$CURRENT_USER" | grep -q "\blxc-users\b"; then
+    echo "Error: User '$CURRENT_USER' is not a member of the 'lxc-users' group."
+    exit 1
+fi
+# ------------------------------------------------------------------------------
+
+# Dependency check
+check_dependencies() {
+    local missing=()
+    local tools=("lxc-create" "zfs" "setfacl" "newuidmap" "newgidmap")
+    for tool in "${tools[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then missing+=("$tool"); fi
+    done
+    if [ ${#missing[@]} -ne 0 ]; then
+        echo "Error: Required tools are missing: ${missing[*]}"
+        exit 1
+    fi
+}
+check_dependencies
+
+# Load optional configuration files (in order of precedence)
+for conf in "/etc/lxc-tools/lxc-tools.conf" "$HOME/.config/lxc-tools/lxc-tools.conf" "./lxc-tools.conf"; do
+    if [ -f "$conf" ]; then
+        # shellcheck source=/dev/null
+        . "$conf"
+    fi
+done
+
+# Apply safe defaults if not defined in config or environment
+LXC_ZFS_POOL="${LXC_ZFS_POOL:-rpool}"
+LXC_PRIV_PATH="${LXC_PRIV_PATH:-/${LXC_ZFS_POOL}/lxc/privileged}"
+LXC_UNPRIV_BASE="${LXC_UNPRIV_BASE:-/${LXC_ZFS_POOL}/lxc/unprivileged}"
+BASE_PROJECT_DIR="${BASE_PROJECT_DIR:-/opt/project}"
+LXC_NET_LINK="${LXC_NET_LINK:-lxcbr0}"
+
+# Configuration
+CONTAINER_NAME=$1
+DISTRO=${2:-ubuntu}
+RELEASE=${3:-lts}
+ARCH=${4:-amd64}
+QUOTA=${5:-10G}
+
+# 4-argument shorthand: if no explicit arch/quota are supplied and the 4th
+# argument ends with a size suffix (e.g. 64G), treat it as the quota and keep
+# the default architecture.
+if [ -z "${5:-}" ] && [[ "$ARCH" =~ ^[0-9]+[KkMmGgTtPpEe]([iI][bB])?$ ]]; then
+    QUOTA="$ARCH"
+    ARCH="amd64"
+fi
+
+# Usage check
+if [ -z "$CONTAINER_NAME" ]; then
+    show_help
+    exit 1
+fi
+
+# Parameter validation
+validate_param() {
+    local param_name=$1; local value=$2
+    if ! [[ "$value" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+        echo "Error: Parameter '$param_name' ('$value') contains invalid characters."
+        echo "Allowed: alphanumeric characters, dots, underscores, and dashes."
+        exit 1
+    fi
+}
+validate_param "container_name" "$CONTAINER_NAME"
+validate_param "distro" "$DISTRO"
+validate_param "release" "$RELEASE"
+validate_param "arch" "$ARCH"
+if [ -n "$QUOTA" ]; then validate_param "quota" "$QUOTA"; fi
+
+# Guard against a quota size accidentally supplied in the architecture
+# position when the explicit 5-argument form is used.
+if [[ "$ARCH" =~ ^[0-9]+[KkMmGgTtPpEe]([iI][bB])?$ ]]; then
+    echo "Error: '$ARCH' looks like a quota size, not an architecture."
+    echo "Usage: $(basename "$0") <container_name> [distro] [release] [arch] [quota]"
+    echo "Example: $(basename "$0") my-app ubuntu lts amd64 64G"
+    exit 1
+fi
+
+# LTS Resolution
+if [ "$RELEASE" = "lts" ]; then
+    echo "Resolving 'lts' for $DISTRO..."
+    case "$DISTRO" in
+        ubuntu) RELEASE=$(ubuntu-distro-info --lts 2>/dev/null || echo "jammy") ;;
+        debian) RELEASE=$(debian-distro-info --stable 2>/dev/null || echo "bookworm") ;;
+        alpine|rockylinux|almalinux)
+            RELEASE=$(sudo -u "$CURRENT_USER" lxc-create -n "lts_lookup_$$" -t download -- --list 2>/dev/null | \
+                     awk -v d="$DISTRO" '$1 == d && $2 ~ /^[0-9.]+$/ {print $2}' | \
+                     sort -V | tail -n 1 || true)
+            [ -z "$RELEASE" ] && RELEASE="latest"
+            ;;
+    esac
+    echo "Resolved 'lts' to: $RELEASE"
+fi
+
+LXC_PATH="$LXC_UNPRIV_BASE/$CURRENT_USER"
+ZFS_ROOT="${LXC_ZFS_POOL}/lxc/unprivileged/$CURRENT_USER"
+
+echo "--- Starting creation of unprivileged container: $CONTAINER_NAME for user: $CURRENT_USER ---"
+
+# 0. Setup User's Local LXC Config Environment (as user)
+echo "[0/7] Configuring local LXC environment in $USER_HOME/.config/lxc"
+sudo -u "$CURRENT_USER" mkdir -p "$USER_HOME/.config/lxc"
+
+# Get Mapping info
+MAPPED_LINE=$(grep "^$CURRENT_USER:" /etc/subuid | head -n 1)
+MAPPED_ROOT_UID=$(echo "$MAPPED_LINE" | cut -d: -f2)
+MAPPED_RANGE=$(echo "$MAPPED_LINE" | cut -d: -f3)
+
+LXC_USER_CONF="$USER_HOME/.config/lxc/lxc.conf"
+if [ ! -f "$LXC_USER_CONF" ]; then
+    echo "lxc.lxcpath = $LXC_PATH" | sudo -u "$CURRENT_USER" tee "$LXC_USER_CONF" >/dev/null
+    echo "lxc.bdev.zfs.root = $ZFS_ROOT" | sudo -u "$CURRENT_USER" tee -a "$LXC_USER_CONF" >/dev/null
+fi
+
+LXC_DEFAULT_CONF="$USER_HOME/.config/lxc/default.conf"
+if [ ! -f "$LXC_DEFAULT_CONF" ]; then
+    sudo -u "$CURRENT_USER" tee "$LXC_DEFAULT_CONF" >/dev/null <<EOF
+lxc.net.0.type = veth
+lxc.net.0.link = $LXC_NET_LINK
+lxc.net.0.flags = up
+lxc.idmap = u 0 $MAPPED_ROOT_UID $MAPPED_RANGE
+lxc.idmap = g 0 $MAPPED_ROOT_UID $MAPPED_RANGE
+EOF
+fi
+
+# 1. Ensure User's LXC base dataset exists
+echo "[1/7] Checking ZFS dataset: $ZFS_ROOT"
+if ! zfs list "$ZFS_ROOT" >/dev/null 2>&1; then
+    echo "Creating dataset $ZFS_ROOT..."
+    zfs create -p "$ZFS_ROOT"
+    chown "$CURRENT_USER:$USER_GID" "$LXC_PATH"
+    chmod 750 "$LXC_PATH"
+    # Set traversal ACL for container root on the user's path
+    setfacl -m u:$MAPPED_ROOT_UID:x "$LXC_PATH"
+fi
+
+# 2. Ensure project subdirectory exists
+SUBDIR="$BASE_PROJECT_DIR/$CONTAINER_NAME"
+if [ ! -d "$SUBDIR" ]; then
+    echo "[2/7] Creating project directory: $SUBDIR"
+    mkdir -p "$SUBDIR"
+    chown "$CURRENT_USER:$USER_GID" "$SUBDIR"
+fi
+
+# 3. Apply ACLs for container root
+echo "[3/7] Applying ACLs (Mapped UID: $MAPPED_ROOT_UID) to $SUBDIR"
+if ! getfacl "$BASE_PROJECT_DIR" | grep -q "user:$MAPPED_ROOT_UID:--x"; then
+    setfacl -m u:$MAPPED_ROOT_UID:x "$BASE_PROJECT_DIR"
+fi
+setfacl -R -m u:$MAPPED_ROOT_UID:rwx "$SUBDIR"
+setfacl -R -d -m u:$MAPPED_ROOT_UID:rwx "$SUBDIR"
+
+# 4. Create LXC container (as user)
+echo "[4/7] Creating LXC container template (this may take a minute)..."
+sudo -u "$CURRENT_USER" lxc-create -n "$CONTAINER_NAME" -P "$LXC_PATH" -t download -- \
+    -d "$DISTRO" -r "$RELEASE" -a "$ARCH"
+
+# 5. Convert rootfs to ZFS dataset
+CONTAINER_DATASET="$ZFS_ROOT/$CONTAINER_NAME"
+ROOTFS_PATH="$LXC_PATH/$CONTAINER_NAME/rootfs"
+echo "[5/7] Converting rootfs to ZFS dataset: $CONTAINER_DATASET"
+TEMP_DATA="/tmp/lxc_rootfs_$CONTAINER_NAME"
+[ -d "$TEMP_DATA" ] && rm -rf "$TEMP_DATA"
+# Move data using root (needed for mapped UIDs)
+mv "$ROOTFS_PATH" "$TEMP_DATA"
+
+# Create dataset
+zfs create -o "mountpoint=$ROOTFS_PATH" "$CONTAINER_DATASET"
+# Force mount just in case
+zfs mount "$CONTAINER_DATASET" 2>/dev/null || true
+
+if ! mount | grep -q "$ROOTFS_PATH"; then
+    echo "Error: Failed to mount ZFS dataset at $ROOTFS_PATH"
+    exit 1
+fi
+
+# Set ownership of the ZFS root to the mapped root user
+chown "$MAPPED_ROOT_UID:$MAPPED_ROOT_UID" "$ROOTFS_PATH"
+
+[ -n "$QUOTA" ] && zfs set quota="$QUOTA" "$CONTAINER_DATASET"
+
+# Move data back
+echo "Restoring data to ZFS dataset..."
+mv "$TEMP_DATA"/* "$ROOTFS_PATH/"
+rm -rf "$TEMP_DATA"
+
+# 6. Bind mount config
+CONFIG_FILE="$LXC_PATH/$CONTAINER_NAME/config"
+MOUNT_ENTRY="lxc.mount.entry = $SUBDIR opt/project none bind,create=dir 0 0"
+if ! grep -q "$SUBDIR" "$CONFIG_FILE"; then
+    echo -e "\n# Bind mount for project files\n$MOUNT_ENTRY" >> "$CONFIG_FILE"
+fi
+
+# 7. Final output
+echo "[7/7] Setup complete!"
+echo "-------------------------------------------------------"
+echo "Container '$CONTAINER_NAME' is ready."
+echo "User:           $CURRENT_USER"
+echo "Host Path:      $SUBDIR"
+echo "To start it:    start-lxc-project $CONTAINER_NAME"
+echo "To attach:     lxc-attach -n $CONTAINER_NAME -P $LXC_PATH"

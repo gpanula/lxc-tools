@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Gitmoji commit-msg hook
+# Validates that the commit message starts with a Gitmoji
+
+commit_msg_file="$1"
+first_line=$(head -n 1 "$commit_msg_file")
+
+# Allow merge / revert commits
+if [[ "$first_line" =~ ^(Merge|Revert) ]]; then
+    exit 0
+fi
+
+python3 - << EOF
+import re
+import sys
+
+msg = """$first_line""".strip()
+EMOJI_PATTERN = re.compile(
+    r'^('
+    r':\w+:'
+    r'|[\U00010000-\U0010ffff]'
+    r'|[\u2600-\u27bf]'
+    r'|[\u2300-\u23ff]'
+    r'|[\u2b50\u2b55]'
+    r'|\ud83c[\udf00-\udfff]'
+    r'|\ud83d[\udc00-\ude4f\ude80-\udeff]'
+    r'|\ud83e[\udd00-\uddff]'
+    r')'
+)
+
+if not EMOJI_PATTERN.match(msg):
+    print("❌ [Gitmoji Hook Error] Commit message must start with a Gitmoji!")
+    print(f"   Provided: \"{msg}\"")
+    print("   Example: ✨ (scope): add new feature")
+    print("   See CONTRIBUTING.md or https://gitmoji.dev for options.")
+    sys.exit(1)
+
+print(f"✅ Gitmoji verified: {msg[:40]}...")
+sys.exit(0)
+EOF
+
+exit $?

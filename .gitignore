@@ -1,0 +1,15 @@
+# Local environment configs
+lxc-tools.conf
+*.local.conf
+
+# Logs & temp files
+*.log
+*.tmp
+*.swp
+*~
+.DS_Store
+
+# Editor & IDE
+.vscode/
+.idea/
+*.iml

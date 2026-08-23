@@ -1,0 +1,38 @@
+# LXC Tools Configuration
+# Copy this file to one of the following locations and customize for your environment:
+#   /etc/lxc-tools/lxc-tools.conf       (system-wide, requires root)
+#   ~/.config/lxc-tools/lxc-tools.conf  (user-specific)
+#   ./lxc-tools.conf                    (current directory, for testing)
+#
+# Environment variables take precedence over config file values.
+# If neither is set, safe defaults are used.
+
+# ============================================================================
+# ZFS Configuration
+# ============================================================================
+# Name of the ZFS pool where LXC datasets will be created.
+# Default: rpool
+LXC_ZFS_POOL="${LXC_ZFS_POOL:-rpool}"
+
+# Path to privileged (system-managed) LXC containers.
+# Default: /<pool>/lxc/privileged
+LXC_PRIV_PATH="${LXC_PRIV_PATH:-/${LXC_ZFS_POOL}/lxc/privileged}"
+
+# Base path for unprivileged (user-managed) LXC containers.
+# Default: /<pool>/lxc/unprivileged
+LXC_UNPRIV_BASE="${LXC_UNPRIV_BASE:-/${LXC_ZFS_POOL}/lxc/unprivileged}"
+
+# ============================================================================
+# Host Project Directory
+# ============================================================================
+# Host directory where project files are bind-mounted into containers.
+# Default: /opt/project
+BASE_PROJECT_DIR="${BASE_PROJECT_DIR:-/opt/project}"
+
+# ============================================================================
+# Network Configuration
+# ============================================================================
+# Default network bridge or interface for container veth links.
+# Common values: lxcbr0 (default LXC bridge), br0, virbr0, or custom bridge name.
+# Default: lxcbr0
+LXC_NET_LINK="${LXC_NET_LINK:-lxcbr0}"

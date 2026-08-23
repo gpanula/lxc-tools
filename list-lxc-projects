@@ -1,0 +1,139 @@
+#!/bin/bash
+
+# ==============================================================================
+# LXC Unprivileged Project Lister
+# ==============================================================================
+#
+# SETUP INSTRUCTIONS: (See create-lxc-project for full details)
+# Required ZFS Delegation:
+# sudo zfs allow -g lxc-users create,destroy,mount,snapshot,quota,promote,rename,rollback,clone,mountpoint <pool>/lxc/unprivileged
+#
+# This script lists unprivileged containers for the current user and shows
+# their associated project paths. If run as root, it lists all privileged
+# and unprivileged containers on the system.
+# ==============================================================================
+
+# Exit on error
+set -e
+
+# Dependency check
+check_dependencies() {
+    local missing=()
+    local tools=("lxc-ls")
+    
+    for tool in "${tools[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            missing+=("$tool")
+        fi
+    done
+
+    if [ ${#missing[@]} -ne 0 ]; then
+        echo "Error: Required tools are missing: ${missing[*]}"
+        echo "Please install them using:"
+        echo "  sudo apt update && sudo apt install lxc"
+        exit 1
+    fi
+}
+
+# Help function
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") [options]
+
+Lists LXC projects. 
+- Regular users: Lists their own unprivileged projects.
+- Root user: Lists ALL privileged and unprivileged projects.
+
+OPTIONS:
+  --active | -a      List only active (running) containers.
+  --stopped | -s     List only stopped containers.
+  -h, --help         Show this help message.
+
+COLUMNS SHOWN:
+  NAME, STATE, IPV4, IPV6, AUTOSTART
+EOF
+}
+
+# Check for help flags
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+# Run dependency check
+check_dependencies
+
+# Load optional configuration files (in order of precedence)
+for conf in "/etc/lxc-tools/lxc-tools.conf" "$HOME/.config/lxc-tools/lxc-tools.conf" "./lxc-tools.conf"; do
+    if [ -f "$conf" ]; then
+        # shellcheck source=/dev/null
+        . "$conf"
+    fi
+done
+
+# Apply safe defaults if not defined in config or environment
+LXC_ZFS_POOL="${LXC_ZFS_POOL:-rpool}"
+LXC_PRIV_PATH="${LXC_PRIV_PATH:-/${LXC_ZFS_POOL}/lxc/privileged}"
+LXC_UNPRIV_BASE="${LXC_UNPRIV_BASE:-/${LXC_ZFS_POOL}/lxc/unprivileged}"
+BASE_PROJECT_DIR="${BASE_PROJECT_DIR:-/opt/project}"
+
+# Dynamically determine the user
+CURRENT_USER=$(whoami)
+
+if [ "$CURRENT_USER" = "root" ]; then
+    echo "--- [System Tier] Privileged Containers ---"
+    lxc-ls -f -P "$LXC_PRIV_PATH" -F NAME,STATE,IPV4,IPV6,AUTOSTART "$@" || echo "None found or path missing."
+    echo ""
+    
+    echo "--- [User Tier] Unprivileged Containers ---"
+    # Find all user subdirectories in the unprivileged path
+    found_any=false
+    if [ -d "$LXC_UNPRIV_BASE" ]; then
+        # Iterate through subdirectories (each represents a user)
+        for user_dir in "$LXC_UNPRIV_BASE"/*; do
+            if [ -d "$user_dir" ]; then
+                user_name=$(basename "$user_dir")
+                # Only show if there are actually containers inside
+                if [ "$(ls -A "$user_dir")" ]; then
+                    echo "User: $user_name"
+                    lxc-ls -f -P "$user_dir" -F NAME,STATE,IPV4,IPV6,AUTOSTART "$@"
+                    echo ""
+                    found_any=true
+                fi
+            fi
+        done
+    fi
+    [ "$found_any" = false ] && echo "No unprivileged containers found."
+    
+else
+    # Regular user logic
+    # Group membership check
+    if ! groups | grep -q "\blxc-users\b"; then
+        echo "Error: User '$CURRENT_USER' is not a member of the 'lxc-users' group."
+        exit 1
+    fi
+
+    LXC_PATH="$LXC_UNPRIV_BASE/$CURRENT_USER"
+    
+    # Check if lxc path exists
+    if [ ! -d "$LXC_PATH" ]; then
+        echo "No projects found for user '$CURRENT_USER' (LXC path missing)."
+        exit 0
+    fi
+
+    echo "--- Unprivileged Projects for $CURRENT_USER ---"
+    echo "LXC Path: $LXC_PATH"
+    echo ""
+    lxc-ls -f -P "$LXC_PATH" -F NAME,STATE,IPV4,IPV6,AUTOSTART "$@"
+fi
+
+echo ""
+echo "Note: Associated host project folders are located in $BASE_PROJECT_DIR/"
+echo "-------------------------------------------------------"
+echo "QUICK COMMANDS:"
+echo "  Start:   start-lxc-project <name>"
+echo "  Stop:    stop-lxc-project <name>"
+echo "  Restart: restart-lxc-project <name>"
+echo "  Connect: lxc-attach -n <name> -P <path>"
+echo "  Remove:  remove-lxc-project <name>"
+echo "-------------------------------------------------------"

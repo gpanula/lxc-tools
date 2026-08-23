@@ -1,0 +1,116 @@
+#!/bin/bash
+
+# ==============================================================================
+# LXC Project Stopper
+# ==============================================================================
+#
+# SETUP INSTRUCTIONS: (See create-lxc-project for full details)
+# Required Sudoers:
+# echo "%lxc-users ALL=(ALL) NOPASSWD: /usr/local/bin/create-lxc-project, /usr/local/bin/remove-lxc-project, /usr/local/bin/list-lxc-projects, /usr/local/bin/start-lxc-project, /usr/local/bin/stop-lxc-project" | sudo tee /etc/sudoers.d/lxc-automation
+#
+# This script stops an unprivileged container for the caller.
+# If run as root, it can stop any container by searching all tiers.
+# ==============================================================================
+
+# Exit on error
+set -e
+
+# Help function
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") <container_name> [--kill]
+
+Stops an LXC container.
+- Regular users: Stops containers in their own unprivileged path.
+- Root user: Searches privileged and then all user paths for the container.
+
+OPTIONS:
+  -k, --kill        Force immediate shutdown (hard kill).
+                    May be given before or after the container name.
+EOF
+}
+
+# Check for help flags
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# AUTO-SUDO LOGIC
+# ------------------------------------------------------------------------------
+if [ "$(id -u)" -ne 0 ]; then
+    exec sudo "$0" "$@"
+fi
+
+CURRENT_USER="${SUDO_USER:-$(whoami)}"
+KILL_FLAG=""
+CONTAINER_NAME=""
+
+# Accept the --kill/-k flag in any position; the first non-flag argument
+# is treated as the container name (avoids silent misinterpretation when
+# the flag is placed before the name).
+for arg in "$@"; do
+    case "$arg" in
+        -k|--kill) KILL_FLAG="-k" ;;
+        -h|--help) show_help; exit 0 ;;
+        *) if [ -z "$CONTAINER_NAME" ]; then CONTAINER_NAME="$arg"; fi ;;
+    esac
+done
+
+if [ -z "$CONTAINER_NAME" ]; then
+    show_help
+    exit 1
+fi
+
+# Security check: User must be in lxc-users group (unless root)
+if [ "$CURRENT_USER" != "root" ] && ! groups "$CURRENT_USER" | grep -q "\blxc-users\b"; then
+    echo "Error: User '$CURRENT_USER' is not a member of the 'lxc-users' group."
+    exit 1
+fi
+# ------------------------------------------------------------------------------
+
+# Load optional configuration files (in order of precedence)
+for conf in "/etc/lxc-tools/lxc-tools.conf" "$HOME/.config/lxc-tools/lxc-tools.conf" "./lxc-tools.conf"; do
+    if [ -f "$conf" ]; then
+        # shellcheck source=/dev/null
+        . "$conf"
+    fi
+done
+
+# Apply safe defaults if not defined in config or environment
+LXC_ZFS_POOL="${LXC_ZFS_POOL:-rpool}"
+LXC_PRIV_PATH="${LXC_PRIV_PATH:-/${LXC_ZFS_POOL}/lxc/privileged}"
+LXC_UNPRIV_BASE="${LXC_UNPRIV_BASE:-/${LXC_ZFS_POOL}/lxc/unprivileged}"
+
+find_container_path() {
+    local name=$1
+    if [ -d "$LXC_PRIV_PATH/$name" ]; then echo "$LXC_PRIV_PATH"; return 0; fi
+    for d in "$LXC_UNPRIV_BASE"/*; do
+        if [ -d "$d/$name" ]; then echo "$d"; return 0; fi
+    done
+    return 1
+}
+
+if [ "$CURRENT_USER" = "root" ]; then
+    PATH_FOUND=$(find_container_path "$CONTAINER_NAME")
+    if [ $? -eq 0 ]; then
+        echo "Stopping container '$CONTAINER_NAME' in path: $PATH_FOUND"
+        lxc-stop -n "$CONTAINER_NAME" -P "$PATH_FOUND" $KILL_FLAG
+    else
+        echo "Error: Container '$CONTAINER_NAME' not found in any path."
+        exit 1
+    fi
+else
+    LXC_PATH="$LXC_UNPRIV_BASE/$CURRENT_USER"
+    if [ -d "$LXC_PATH/$CONTAINER_NAME" ]; then
+        echo "Stopping container '$CONTAINER_NAME' as user $CURRENT_USER..."
+        sudo -u "$CURRENT_USER" lxc-stop -n "$CONTAINER_NAME" -P "$LXC_PATH" $KILL_FLAG
+    else
+        echo "Error: Container '$CONTAINER_NAME' not found in $LXC_PATH."
+        exit 1
+    fi
+fi
+
+# Verify status
+lxc-info -n "$CONTAINER_NAME" -P "${PATH_FOUND:-$LXC_PATH}"

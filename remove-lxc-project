@@ -1,0 +1,172 @@
+#!/bin/bash
+
+# ==============================================================================
+# LXC Unprivileged Container Remover
+# ==============================================================================
+#
+# SETUP INSTRUCTIONS: (See create-lxc-project for full details)
+# Required ZFS Delegation:
+# sudo zfs allow -g lxc-users create,destroy,mount,snapshot,quota,promote,rename,rollback,clone,mountpoint <pool>/lxc/unprivileged
+#
+# This script safely removes an unprivileged container, its ZFS dataset,
+# and its associated project directory under /opt/project.
+# ==============================================================================
+
+# Exit on error
+set -e
+
+# Dependency check
+check_dependencies() {
+    local missing=()
+    local tools=("lxc-stop" "lxc-destroy" "zfs")
+    
+    for tool in "${tools[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            missing+=("$tool")
+        fi
+    done
+
+    if [ ${#missing[@]} -ne 0 ]; then
+        echo "Error: Required tools are missing: ${missing[*]}"
+        echo "Please install them using:"
+        echo "  sudo apt update && sudo apt install lxc zfsutils-linux"
+        exit 1
+    fi
+}
+
+# Help function
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") <container_name> [--force]
+
+Safely removes an unprivileged LXC container and its associated resources.
+
+ARGUMENTS:
+  container_name    Name of the container to remove (required).
+  --force | -f      Skip the confirmation prompt and force removal.
+                    May be given before or after the container name.
+
+WHAT IT REMOVES:
+  - Stops and destroys the LXC container.
+  - Destroys the container's ZFS dataset.
+  - Deletes the host project folder at /opt/project/<name>.
+
+PREREQUISITES:
+  - User must be a member of the 'lxc-users' group.
+  - User must be the owner of the container (located in their unprivileged path).
+EOF
+}
+
+# Check for help flags
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+# Run dependency check
+check_dependencies
+
+# Load optional configuration files (in order of precedence)
+for conf in "/etc/lxc-tools/lxc-tools.conf" "$HOME/.config/lxc-tools/lxc-tools.conf" "./lxc-tools.conf"; do
+    if [ -f "$conf" ]; then
+        # shellcheck source=/dev/null
+        . "$conf"
+    fi
+done
+
+# Apply safe defaults if not defined in config or environment
+LXC_ZFS_POOL="${LXC_ZFS_POOL:-rpool}"
+LXC_UNPRIV_BASE="${LXC_UNPRIV_BASE:-/${LXC_ZFS_POOL}/lxc/unprivileged}"
+BASE_PROJECT_DIR="${BASE_PROJECT_DIR:-/opt/project}"
+
+# Dynamically determine the user
+CURRENT_USER=$(whoami)
+LXC_PATH="$LXC_UNPRIV_BASE/$CURRENT_USER"
+ZFS_ROOT="${LXC_ZFS_POOL}/lxc/unprivileged/$CURRENT_USER"
+
+# Configuration
+FORCE=false
+CONTAINER_NAME=""
+
+# Accept the --force/-f flag in any position; the first non-flag argument
+# is treated as the container name (avoids silent misinterpretation when
+# the flag is placed before the name).
+for arg in "$@"; do
+    case "$arg" in
+        -f|--force) FORCE=true ;;
+        -h|--help) show_help; exit 0 ;;
+        *) if [ -z "$CONTAINER_NAME" ]; then CONTAINER_NAME="$arg"; fi ;;
+    esac
+done
+
+# Usage check
+if [ -z "$CONTAINER_NAME" ]; then
+    show_help
+    exit 1
+fi
+
+# Parameter validation
+if ! [[ "$CONTAINER_NAME" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
+    echo "Error: Container name ('$CONTAINER_NAME') contains invalid characters."
+    echo "Allowed: alphanumeric characters, dots, underscores, and dashes."
+    exit 1
+fi
+
+# Group membership check
+if ! groups | grep -q "\blxc-users\b"; then
+    echo "Error: User '$CURRENT_USER' is not a member of the 'lxc-users' group."
+    exit 1
+fi
+
+# Check if container exists
+if [ ! -d "$LXC_PATH/$CONTAINER_NAME" ]; then
+    echo "Error: Container '$CONTAINER_NAME' not found in $LXC_PATH."
+    exit 1
+fi
+
+# Confirmation prompt
+if [ "$FORCE" = false ]; then
+    echo "WARNING: This will permanently destroy:"
+    echo "  - Container:  $CONTAINER_NAME"
+    echo "  - Dataset:    $ZFS_ROOT/$CONTAINER_NAME"
+    echo "  - Project:    $BASE_PROJECT_DIR/$CONTAINER_NAME"
+    read -p "Are you absolutely sure you want to proceed? [y/N] " confirm
+    if [[ ! "$confirm" =~ ^[yY]$ ]]; then
+        echo "Removal cancelled."
+        exit 0
+    fi
+fi
+
+echo "--- Starting removal of container: $CONTAINER_NAME ---"
+
+# 1. Stop the container if running
+echo "[1/4] Stopping container (if running)..."
+lxc-stop -n "$CONTAINER_NAME" -P "$LXC_PATH" -k || true
+
+# 2. Destroy the LXC container
+echo "[2/4] Destroying LXC container..."
+lxc-destroy -n "$CONTAINER_NAME" -P "$LXC_PATH"
+
+# 3. Destroy the ZFS dataset
+echo "[3/4] Destroying ZFS dataset: $ZFS_ROOT/$CONTAINER_NAME"
+if zfs list "$ZFS_ROOT/$CONTAINER_NAME" >/dev/null 2>&1; then
+    zfs destroy "$ZFS_ROOT/$CONTAINER_NAME" || sudo zfs destroy "$ZFS_ROOT/$CONTAINER_NAME"
+else
+    echo "Dataset not found. Skipping."
+fi
+
+# 4. Remove the project directory
+SUBDIR="$BASE_PROJECT_DIR/$CONTAINER_NAME"
+echo "[4/4] Removing project directory: $SUBDIR"
+if [ -d "$SUBDIR" ]; then
+    # Security check: Ensure it's not a symlink and is under /opt/project
+    if [ -L "$SUBDIR" ]; then
+        echo "Error: $SUBDIR is a symlink. Manual removal required for safety."
+    else
+        rm -rf "$SUBDIR" || sudo rm -rf "$SUBDIR"
+    fi
+else
+    echo "Project directory not found. Skipping."
+fi
+
+echo "--- Removal complete! ---"

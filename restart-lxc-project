@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# ==============================================================================
+# LXC Project Restarter
+# ==============================================================================
+#
+# SETUP INSTRUCTIONS: (See create-lxc-project for full details)
+# Required Sudoers:
+# echo "%lxc-users ALL=(ALL) NOPASSWD: /usr/local/bin/create-lxc-project, /usr/local/bin/remove-lxc-project, /usr/local/bin/list-lxc-projects, /usr/local/bin/start-lxc-project, /usr/local/bin/stop-lxc-project, /usr/local/bin/restart-lxc-project" | sudo tee /etc/sudoers.d/lxc-automation
+#
+# This script restarts an LXC container by stopping and then starting it.
+# ==============================================================================
+
+# Exit on error
+set -e
+
+# Help function
+show_help() {
+    cat <<EOF
+Usage: $(basename "$0") <container_name>
+
+Restarts an LXC container.
+EOF
+}
+
+# Check for help flags
+if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    show_help
+    exit 0
+fi
+
+CONTAINER_NAME=$1
+
+if [ -z "$CONTAINER_NAME" ]; then
+    show_help
+    exit 1
+fi
+
+echo "--- Restarting container: $CONTAINER_NAME ---"
+
+# Use our existing tools for reliability
+stop-lxc-project "$CONTAINER_NAME"
+start-lxc-project "$CONTAINER_NAME"
+
+echo "--- Restart complete! ---"
