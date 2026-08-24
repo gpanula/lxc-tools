@@ -12,7 +12,8 @@
 
 ## 📁 Related Area
 <!-- Select the relevant area(s) -->
-- [ ] Scripts — Core LXC lifecycle scripts (create/start/stop/restart/list/remove)
+- [ ] CLI — `lxc-tools` subcommands (create/start/stop/restart/list/remove)
+- [ ] Backends — `lxc_tools/` native bindings (ZFS, LXC, ACL, distro)
 - [ ] Configuration — `lxc-tools.conf.example` & config handling
 - [ ] Documentation — README, SECURITY, CONTRIBUTING, AGENTS
 - [ ] CI & Hooks — GitHub Actions, git hooks, PR template

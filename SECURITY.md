@@ -2,7 +2,7 @@
 
 ## Overview
 
-These scripts implement a **delegated privilege model** where unprivileged users can manage their own LXC containers without full root access. This document outlines the security boundaries, assumptions, and best practices.
+These tools implement a **delegated privilege model** where unprivileged users can manage their own LXC containers without full root access. The functionality previously provided by six bash scripts is now a single Python CLI (`lxc-tools`) with subcommands. This document outlines the security boundaries, assumptions, and best practices.
 
 ## Trust Boundaries
 
@@ -17,17 +17,20 @@ The following operations require root privileges and are delegated via `sudoers`
 
 **Sudoers Configuration** (`/etc/sudoers.d/lxc-automation`):
 ```bash
-%lxc-users ALL=(ALL) NOPASSWD: /usr/local/bin/create-lxc-project, /usr/local/bin/remove-lxc-project, /usr/local/bin/list-lxc-projects, /usr/local/bin/start-lxc-project, /usr/local/bin/stop-lxc-project, /usr/local/bin/restart-lxc-project
+%lxc-users ALL=(ALL) NOPASSWD: /usr/local/bin/lxc-tools
 ```
 
-This grants passwordless execution of these specific scripts only. Users cannot escalate to arbitrary root commands.
+This grants passwordless execution of the single `lxc-tools` binary (all subcommands). Users cannot escalate to arbitrary root commands beyond what the CLI exposes. This matches the trust model of the legacy scripts, which were granted as whole executables that ran as root.
 
 ### User-Level Operations
 
 Unprivileged users can:
+
 - Create and manage containers in their own LXC path (`/<pool>/lxc/unprivileged/<username>/`)
 - Access only their own containers and project directories
 - Cannot access other users' containers or datasets
+
+The CLI re-executes itself via `sudo` when not root, then runs user-tier container lifecycle operations with `sudo -u <user>` so the unprivileged/mapped-UID model is preserved (the same pattern the legacy scripts used).
 
 ## Isolation Mechanisms
 
@@ -66,6 +69,7 @@ setfacl -R -m u:100000:rwx /opt/project/<container>
 ### 4. LXC Confinement
 
 LXC provides additional isolation:
+
 - **AppArmor/SELinux**: Restrict container syscalls (if enabled on host)
 - **Cgroups**: Limit CPU, memory, and I/O resources
 - **Network Namespaces**: Isolated network stack per container
@@ -80,7 +84,7 @@ All user-supplied parameters are validated:
 - **Architecture names**: Alphanumeric only
 - **Quota sizes**: Numeric with size suffix (K, M, G, T, P, E)
 
-**Validation prevents**: Command injection, path traversal, and argument confusion attacks.
+**Validation prevents**: Command injection, path traversal, and argument confusion attacks. Python subprocess calls use argument lists (no shell interpolation), eliminating shell-injection surfaces.
 
 ## Configuration Security
 
@@ -94,7 +98,7 @@ The following paths are environment-specific and should be customized:
 - `BASE_PROJECT_DIR`: Project bind-mount directory (default: `/opt/project`)
 - `LXC_NET_LINK`: Network bridge (default: `lxcbr0`)
 
-**Best Practice**: Store custom values in `/etc/lxc-tools/lxc-tools.conf` (system-wide) or `~/.config/lxc-tools/lxc-tools.conf` (user-specific). Do not hardcode in scripts.
+**Best Practice**: Store custom values in `/etc/lxc-tools/lxc-tools.conf` (system-wide) or `~/.config/lxc-tools/lxc-tools.conf` (user-specific). Do not hardcode in code.
 
 ### Configuration File Permissions
 
@@ -123,6 +127,7 @@ All containers share the host kernel. A kernel exploit in one container can affe
 ### 3. Privileged Operations
 
 Users with `lxc-users` group membership can create containers with arbitrary configurations. A malicious user could:
+
 - Create a container with `lxc.cap.drop` set to allow dangerous capabilities
 - Disable AppArmor confinement
 - Mount host filesystems into the container
@@ -141,7 +146,7 @@ Users can destroy their own ZFS datasets, including snapshots. There is no built
 
 ```bash
 # Monitor /var/log/auth.log for sudo usage
-sudo tail -f /var/log/auth.log | grep create-lxc-project
+sudo tail -f /var/log/auth.log | grep lxc-tools
 
 # Check ZFS dataset creation
 zfs list -r <pool>/lxc/unprivileged
@@ -161,7 +166,7 @@ lxc-info -n <container> -P <path> | grep idmap
 
 ```bash
 # List all containers and their states
-lxc-ls -f -P <path>
+lxc-tools list
 
 # Check container resource limits
 lxc-cgroup -n <container> -P <path> memory.limit_in_bytes
@@ -175,10 +180,11 @@ lxc-cgroup -n <container> -P <path> memory.limit_in_bytes
 4. **Backup Strategy**: Implement ZFS snapshots and off-site backups for critical containers.
 5. **Audit Logging**: Monitor `/var/log/auth.log` for privileged operations.
 6. **AppArmor/SELinux**: Enable and maintain security profiles for additional confinement.
+7. **Dry-run First**: Use `lxc-tools --dry-run ...` to preview destructive operations before executing them.
 
 ## Reporting Security Issues
 
-If you discover a security vulnerability in these scripts, please report it responsibly:
+If you discover a security vulnerability in these tools, please report it responsibly:
 
 1. Do not disclose the vulnerability publicly
 2. Contact the maintainers privately

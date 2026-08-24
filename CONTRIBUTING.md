@@ -65,6 +65,29 @@ Every commit message must begin with a valid **Gitmoji** (either the Unicode emo
 * **Commit-msg Hook**: Validates Gitmoji prefix format on every commit (`.githooks/commit-msg`).
 * **GitHub Actions CI**: Validates all incoming PRs and commits against the Gitmoji standard (`.github/workflows/gitmoji-check.yml`).
 
+### Python Verification
+
+The tooling is now a Python package (`lxc_tools/`). Before submitting a PR, verify your changes:
+
+```bash
+# Install the test tooling (pytest)
+pip install -e ".[test]"
+
+# Run the unit test suite
+pytest
+
+# Byte-compile the package (catches syntax errors)
+python -m compileall -q lxc_tools
+
+# Exercise the CLI help output
+python -m lxc_tools --help
+python -m lxc_tools <subcommand> --help
+
+# Dry-run checks against non-destructive subcommands
+python -m lxc_tools --dry-run create my-app
+python -m lxc_tools --dry-run remove my-app
+```
+
 ### Enable Git Hooks
 
 The local hooks in `.githooks/` are **not active by default**. Enable them once per clone:

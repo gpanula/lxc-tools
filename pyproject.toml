@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lxc-tools"
+version = "0.1.0"
+description = "Python suite for managing unprivileged LXC containers with ZFS backing and secure bind mounts."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "lxc-tools maintainers" }]
+keywords = ["lxc", "zfs", "containers", "unprivileged", "bind-mount"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Environment :: Console",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: System :: Systems Administration",
+]
+# Runtime dependency list is intentionally empty: the native bindings
+# (python3-pyzfs / libzfs_core, python3-lxc, pylibacl) come from the system
+# package manager or the optional `native` extra below.
+dependencies = []
+
+[project.optional-dependencies]
+# Compiles against system dev headers. For a purely native install:
+#   sudo apt install liblxc-dev libacl1-dev
+#   python3 -m venv --system-site-packages .venv
+#   .venv/bin/pip install -e ".[native]"
+# Note: libzfs_core has no PyPI package and must come from apt
+# (sudo apt install python3-pyzfs), which is why the venv should be created
+# with --system-site-packages.
+native = [
+    "lxc-python3",
+    "pylibacl>=0.6",
+]
+
+# Development / test tooling (run: pip install -e ".[test]" && pytest)
+test = [
+    "pytest>=7",
+]
+
+[project.scripts]
+lxc-tools = "lxc_tools.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["lxc_tools*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
