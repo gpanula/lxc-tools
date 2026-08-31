@@ -1,38 +1,40 @@
-# LXC Tools Configuration
+# LXC Tools Configuration (INI)
 # Copy this file to one of the following locations and customize for your environment:
 #   /etc/lxc-tools/lxc-tools.conf       (system-wide, requires root)
 #   ~/.config/lxc-tools/lxc-tools.conf  (user-specific)
 #   ./lxc-tools.conf                    (current directory, for testing)
 #
-# Environment variables take precedence over config file values.
+# Environment variables take precedence over config file values:
+#   LXC_ZFS_POOL, LXC_PRIV_PATH, LXC_UNPRIV_BASE, BASE_PROJECT_DIR, LXC_NET_LINK
 # If neither is set, safe defaults are used.
 
-# ============================================================================
-# ZFS Configuration
-# ============================================================================
+[zfs]
 # Name of the ZFS pool where LXC datasets will be created.
 # Default: rpool
-LXC_ZFS_POOL="${LXC_ZFS_POOL:-rpool}"
+pool = rpool
 
 # Path to privileged (system-managed) LXC containers.
-# Default: /<pool>/lxc/privileged
-LXC_PRIV_PATH="${LXC_PRIV_PATH:-/${LXC_ZFS_POOL}/lxc/privileged}"
+# When omitted, defaults to /<pool>/lxc/privileged
+# priv_path = /rpool/lxc/privileged
 
 # Base path for unprivileged (user-managed) LXC containers.
-# Default: /<pool>/lxc/unprivileged
-LXC_UNPRIV_BASE="${LXC_UNPRIV_BASE:-/${LXC_ZFS_POOL}/lxc/unprivileged}"
+# When omitted, defaults to /<pool>/lxc/unprivileged
+# unpriv_base = /rpool/lxc/unprivileged
 
-# ============================================================================
-# Host Project Directory
-# ============================================================================
+[paths]
 # Host directory where project files are bind-mounted into containers.
 # Default: /opt/project
-BASE_PROJECT_DIR="${BASE_PROJECT_DIR:-/opt/project}"
+project_dir = /opt/project
 
-# ============================================================================
-# Network Configuration
-# ============================================================================
+[network]
 # Default network bridge or interface for container veth links.
 # Common values: lxcbr0 (default LXC bridge), br0, virbr0, or custom bridge name.
 # Default: lxcbr0
-LXC_NET_LINK="${LXC_NET_LINK:-lxcbr0}"
+bridge = lxcbr0
+
+[snapshots]
+# Automatically create a ZFS snapshot before running commands with 'lxc-tools exec'.
+# When set to false, snapshots are only created if --snapshot is explicitly passed.
+# Default: true
+exec_snapshot = true
+

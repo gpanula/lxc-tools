@@ -13,3 +13,19 @@ lxc-tools.conf
 .vscode/
 .idea/
 *.iml
+.roo/
+
+# Python virtual environment
+.venv/
+venv/
+
+# Python build artifacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
