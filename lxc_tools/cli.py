@@ -8,7 +8,16 @@ import sys
 from lxc_tools import __version__
 from lxc_tools.commands import KNOWN_ERRORS
 from lxc_tools.commands import create, list as list_cmd
-from lxc_tools.commands import remove, restart, start, stop
+from lxc_tools.commands import (
+    exec as exec_cmd,
+    remove,
+    restart,
+    rollback,
+    snapshot,
+    snapshots,
+    start,
+    stop,
+)
 
 DESCRIPTION = (
     "Manage unprivileged LXC containers with ZFS backing and secure bind "
@@ -38,7 +47,13 @@ def build_parser() -> argparse.ArgumentParser:
     list_cmd.add_parser(subparsers)
     remove.add_parser(subparsers)
     restart.add_parser(subparsers)
+    snapshot.add_parser(subparsers)
+    rollback.add_parser(subparsers)
+    snapshots.add_parser(subparsers)
+    exec_cmd.add_parser(subparsers)
     return parser
+
+
 
 
 def main(argv: list[str] | None = None) -> int:
