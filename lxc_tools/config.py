@@ -32,6 +32,7 @@ ENV_MAP = {
     "LXC_UNPRIV_BASE": "unpriv_base",
     "BASE_PROJECT_DIR": "project_dir",
     "LXC_NET_LINK": "bridge",
+    "LXC_EXEC_SNAPSHOT": "exec_snapshot",
 }
 
 # INI key -> Config field name. INI sections are ignored; keys are matched by
@@ -42,7 +43,14 @@ INI_MAP = {
     "unpriv_base": "unpriv_base",
     "project_dir": "project_dir",
     "bridge": "bridge",
+    "exec_snapshot": "exec_snapshot",
 }
+
+
+def _to_bool(value: str | bool) -> bool:
+    if isinstance(value, bool):
+        return value
+    return value.strip().lower() in ("true", "1", "yes", "on")
 
 
 class ConfigError(Exception):
@@ -62,6 +70,7 @@ class Config:
     unpriv_base: str = "/rpool/lxc/unprivileged"
     project_dir: str = "/opt/project"
     bridge: str = "lxcbr0"
+    exec_snapshot: bool = True
 
     def __post_init__(self) -> None:
         for field in ("zfs_pool", "priv_path", "unpriv_base", "project_dir", "bridge"):
@@ -96,14 +105,17 @@ def load_config(environ: Mapping[str, str] | None = None) -> Config:
     ini_values = _read_ini_values()
     for key, attr in INI_MAP.items():
         if key in ini_values:
-            cfg = replace(cfg, **{attr: ini_values[key]})
+            val = _to_bool(ini_values[key]) if attr == "exec_snapshot" else ini_values[key]
+            cfg = replace(cfg, **{attr: val})
             explicit.add(attr)
 
     for env_var, attr in ENV_MAP.items():
         value = environ.get(env_var)
-        if value:
-            cfg = replace(cfg, **{attr: value})
+        if value is not None and value != "":
+            val = _to_bool(value) if attr == "exec_snapshot" else value
+            cfg = replace(cfg, **{attr: val})
             explicit.add(attr)
+
 
     # Apply pool-derived defaults only for paths that were not explicitly set.
     cfg = replace(
@@ -116,3 +128,4 @@ def load_config(environ: Mapping[str, str] | None = None) -> Config:
         else f"/{cfg.zfs_pool}/lxc/unprivileged",
     )
     return cfg
+

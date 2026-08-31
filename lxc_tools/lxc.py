@@ -142,6 +142,28 @@ def info(name: str, path: str, user: Optional[str] = None) -> str:
     return proc.stdout.strip()
 
 
+def execute(
+    name: str,
+    path: str,
+    command: list[str],
+    dry_run: bool = False,
+) -> tuple[int, str, str]:
+    """Execute a command inside the container via lxc-attach.
+
+    Returns (returncode, stdout, stderr).
+    """
+    if dry_run:
+        print(f"[dry-run] would run in container '{name}': {' '.join(command)}")
+        return 0, "", ""
+    proc = subprocess.run(
+        ["lxc-attach", "-n", name, "-P", path, "--", *command],
+        capture_output=True,
+        text=True,
+    )
+    return proc.returncode, proc.stdout, proc.stderr
+
+
+
 # -- inspection (native binding preferred, CLI fallback) -----------------------
 
 def list_names(path: str) -> list[str]:
@@ -184,8 +206,6 @@ def container_info(path: str, name: str) -> tuple[str, str, str, str, str]:
     return name, "UNKNOWN", "", "", ""
 
 
-# -- LTS resolution support (documented subprocess escape) ---------------------
-
 def list_download_releases(
     distro: str, user: Optional[str] = None
 ) -> list[str]:
@@ -193,15 +213,44 @@ def list_download_releases(
     proc = run_as(
         user,
         [
-            "lxc-create", "-n", f"lts_lookup_{os.getpid()}",
+            "lxc-create", "-n", f"lts_lookup_{os.getpid()}", "-P", "/tmp",
             "-t", "download", "--", "--list",
         ],
     )
     releases: list[str] = []
-    if proc.returncode == 0:
-        for line in proc.stdout.splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and parts[0] == distro:
-                if re.fullmatch(r"[0-9.]+", parts[1]):
-                    releases.append(parts[1])
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == distro:
+            if re.fullmatch(r"[0-9.]+", parts[1]):
+                releases.append(parts[1])
     return releases
+
+
+def list_templates(
+    distro: Optional[str] = None, user: Optional[str] = None
+) -> list[dict[str, str]]:
+    """Return list of available templates from the download backend."""
+    proc = run_as(
+        user,
+        [
+            "lxc-create", "-n", f"tpl_lookup_{os.getpid()}", "-P", "/tmp",
+            "-t", "download", "--", "--list",
+        ],
+    )
+    results: list[dict[str, str]] = []
+    for line in proc.stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 4 and parts[0] not in ("---", "DIST"):
+            d, r, a, v = parts[0], parts[1], parts[2], parts[3]
+            if distro and d.lower() != distro.lower():
+                continue
+            results.append({
+                "distro": d,
+                "release": r,
+                "arch": a,
+                "variant": v,
+                "build": parts[4] if len(parts) > 4 else "",
+            })
+    return results
+
+

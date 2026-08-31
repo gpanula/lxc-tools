@@ -7,7 +7,7 @@ import pytest
 from lxc_tools.config import Config, ConfigError, load_config
 
 
-def test_defaults():
+def test_defaults(config_files):
     cfg = load_config(environ={})
     assert cfg == Config(
         zfs_pool="rpool",
@@ -66,7 +66,7 @@ def test_explicit_priv_path_not_derived(config_files):
     assert cfg.unpriv_base == "/tank/lxc/unprivileged"
 
 
-def test_empty_env_value_ignored():
+def test_empty_env_value_ignored(config_files):
     cfg = load_config(environ={"LXC_ZFS_POOL": ""})
     assert cfg.zfs_pool == "rpool"
 
@@ -81,3 +81,23 @@ def test_malformed_ini_raises(config_files):
     (config_files[0]).write_text("not an ini :::: [[[", encoding="utf-8")
     with pytest.raises(ConfigError):
         load_config(environ={})
+
+
+def test_exec_snapshot_default(config_files):
+    cfg = load_config(environ={})
+    assert cfg.exec_snapshot is True
+
+
+def test_exec_snapshot_env_override():
+    cfg = load_config(environ={"LXC_EXEC_SNAPSHOT": "false"})
+    assert cfg.exec_snapshot is False
+    cfg_true = load_config(environ={"LXC_EXEC_SNAPSHOT": "1"})
+    assert cfg_true.exec_snapshot is True
+
+
+def test_exec_snapshot_ini_override(config_files):
+    (config_files[0]).write_text("[snapshots]\nexec_snapshot = false\n", encoding="utf-8")
+    cfg = load_config(environ={})
+    assert cfg.exec_snapshot is False
+
+
