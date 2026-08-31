@@ -44,6 +44,8 @@ def ensure_root_or_reexec(argv: list[str] | None = None) -> None:
     raise PrereqError("Failed to re-execute via sudo.")  # pragma: no cover
 
 
+
+
 def resolve_current_user() -> str:
     """Return the effective acting user.
 

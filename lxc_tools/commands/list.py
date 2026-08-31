@@ -83,7 +83,8 @@ def run(args) -> int:
     print("  Start:   lxc-tools start <name>")
     print("  Stop:    lxc-tools stop <name>")
     print("  Restart: lxc-tools restart <name>")
-    print("  Connect: lxc-attach -n <name> -P <path>")
+    print("  Connect: sudo lxc-attach -n <name> -P <path>")
+
     print("  Remove:  lxc-tools remove <name>")
     print("-------------------------------------------------------")
     return 0

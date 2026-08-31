@@ -25,10 +25,9 @@ def _run_cli(cli: str, args: list[str]) -> subprocess.CompletedProcess[str]:
 
 def _ubuntu_lts_python() -> Optional[str]:
     try:
-        from distro_info import UbuntuDistroInfo  # type: ignore
+        from distro_info import UbuntuDistroInfo
 
-        lts = UbuntuDistroInfo().lts()
-        return lts[-1] if lts else None
+        return UbuntuDistroInfo().lts()
     except Exception:
         return None
 
@@ -81,3 +80,4 @@ def resolve_lts(
 
     print(f"Resolved 'lts' to: {resolved}")
     return resolved
+

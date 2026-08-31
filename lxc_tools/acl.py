@@ -42,38 +42,43 @@ def _load_posix1e():
         raise ACLError(INSTALL_HINT)
 
 
-def _acl_type(posix1e, default: bool) -> object:
-    """Return the ACL type constant, preferring the ``ACL_TYPE_*`` API."""
-    name = "ACL_TYPE_DEFAULT" if default else "ACL_TYPE_ACCESS"
-    acl_type = getattr(posix1e, name, None)
-    return acl_type
-
-
 def _read_text(path: Path, default: bool) -> str:
     posix1e = _load_posix1e()
-    acl_type = _acl_type(posix1e, default)
     try:
-        if acl_type is not None:
-            acl = posix1e.ACL(file=str(path), type=acl_type)
-        else:  # older pylibacl API without ACL_TYPE_* constants
-            acl = posix1e.ACL(file=str(path), default=default)
-        return str(acl)
+        if default:
+            acl = posix1e.ACL(filedef=str(path))
+        else:
+            acl = posix1e.ACL(file=str(path))
+        text = str(acl)
+        if text.strip():
+            return text
     except Exception:
-        # Missing ACL, unsupported type kwarg, or unreadable path.
-        return ""
+        pass
+
+    # Fall back to synthesizing base entries from stat mode
+    try:
+        st = path.stat()
+        mode = st.st_mode
+        u = "".join([c if mode & b else "-" for c, b in [("r", 0o400), ("w", 0o200), ("x", 0o100)]])
+        g = "".join([c if mode & b else "-" for c, b in [("r", 0o040), ("w", 0o020), ("x", 0o010)]])
+        o = "".join([c if mode & b else "-" for c, b in [("r", 0o004), ("w", 0o002), ("x", 0o001)]])
+        return f"user::{u}\ngroup::{g}\nother::{o}\n"
+    except Exception:
+        return "user::rwx\ngroup::r-x\nother::r-x\n"
 
 
 def _apply_text(path: Path, text: str, default: bool) -> None:
     posix1e = _load_posix1e()
-    acl_type = _acl_type(posix1e, default)
     try:
         acl = posix1e.ACL(text=text)
+        acl_type = getattr(posix1e, "ACL_TYPE_DEFAULT" if default else "ACL_TYPE_ACCESS", None)
         if acl_type is not None:
             acl.applyto(str(path), acl_type)
         else:
             acl.applyto(str(path))
     except Exception as exc:
         raise ACLError(f"Failed to apply ACL to {path}: {exc}") from exc
+
 
 
 def _normalize_perms(perms: str) -> str:

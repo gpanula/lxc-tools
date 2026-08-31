@@ -74,12 +74,9 @@ def run(args) -> int:
     except lxc_backend.LXCError:
         pass
 
-    # 2. Destroy the LXC container.
-    lxc_backend.destroy(name, lxc_path, user=user, dry_run=args.dry_run)
-
-    # 3. Destroy the ZFS dataset.
+    # 2. Destroy the ZFS dataset first so the rootfs mountpoint is unmounted.
     dataset = f"{zfs_root}/{name}"
-    print(f"[3/4] Destroying ZFS dataset: {dataset}")
+    print(f"[2/4] Destroying ZFS dataset: {dataset}")
     backend = zfs.ZFS()
     if backend.exists(dataset):
 
@@ -89,6 +86,15 @@ def run(args) -> int:
         prereq.dry_or(args.dry_run, "  Destroying ZFS dataset", destroy_dataset)
     else:
         print("Dataset not found. Skipping.")
+
+    # 3. Destroy the LXC container.
+    print(f"[3/4] Destroying LXC container '{name}'...")
+    try:
+        lxc_backend.destroy(name, lxc_path, user=user, dry_run=args.dry_run)
+    except lxc_backend.LXCError:
+        if container_dir.exists():
+            shutil.rmtree(container_dir)
+
 
     # 4. Remove the project directory.
     subdir = Path(cfg.project_dir) / name

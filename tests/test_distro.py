@@ -63,3 +63,17 @@ def test_lts_keyword_case_insensitive(monkeypatch):
 
 def test_unknown_distro_passthrough():
     assert distro.resolve_lts("custom", "lts", run_as_user="alice") == "lts"
+
+
+def test_ubuntu_lts_real_binding(monkeypatch):
+    """Regression: lts() returns a str, so slicing must never return a char."""
+    import distro_info
+
+    monkeypatch.setattr(
+        distro, "_ubuntu_lts_python", lambda: distro_info.UbuntuDistroInfo().lts()
+    )
+    resolved = distro.resolve_lts("ubuntu", "lts", run_as_user="alice")
+    # Must be a real codename (>= 3 chars), never a single character.
+    assert len(resolved) > 1
+    assert resolved != "e"
+

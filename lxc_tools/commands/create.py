@@ -9,7 +9,10 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import subprocess
+import tempfile
 from pathlib import Path
+
 
 from lxc_tools import acl, distro, lxc as lxc_backend, prereq, zfs
 from lxc_tools.commands import SIZE_RE, common_parser, guarded, validate
@@ -78,6 +81,57 @@ def add_parser(subparsers) -> None:
     parser.set_defaults(func=run)
 
 
+def _parse_size_bytes(size_str: str) -> int:
+    """Parse human readable size string like '10G', '500M' to bytes."""
+    units = {"k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}
+    match = re.match(r"^(\d+)\s*([kmgtKMGT])?$", size_str.strip())
+    if not match:
+        return 10 * 1024**3
+    num, unit = match.groups()
+    multiplier = units.get(unit.lower(), 1024**3) if unit else 1
+    return int(num) * multiplier
+
+
+def _format_bytes(bytes_val: float) -> str:
+    """Format bytes to human-readable string."""
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if bytes_val < 1024.0 or unit == "TB":
+            return f"{bytes_val:.2f} {unit}"
+        bytes_val /= 1024.0
+    return f"{bytes_val:.2f} TB"
+
+
+def _check_disk_space(lxc_path: str, quota: str) -> None:
+    """Verify target storage and temp directory have sufficient free space."""
+    buffer_bytes = 2 * 1024**3
+    quota_bytes = _parse_size_bytes(quota)
+    required_target_bytes = quota_bytes + buffer_bytes
+
+    # Find closest existing parent path for target
+    target_path = Path(lxc_path)
+    while not target_path.exists() and target_path != target_path.parent:
+        target_path = target_path.parent
+
+    if target_path.exists():
+        free_target = shutil.disk_usage(target_path).free
+        if free_target < required_target_bytes:
+            raise prereq.PrereqError(
+                f"Error: Insufficient space on target storage ({target_path}).\n"
+                f"  Required:  {_format_bytes(required_target_bytes)} (quota {quota} + 2 GB buffer)\n"
+                f"  Available: {_format_bytes(free_target)}"
+            )
+
+    temp_dir = Path(tempfile.gettempdir())
+    if temp_dir.exists():
+        free_temp = shutil.disk_usage(temp_dir).free
+        if free_temp < buffer_bytes:
+            raise prereq.PrereqError(
+                f"Error: Insufficient temporary space in {temp_dir}.\n"
+                f"  Required:  {_format_bytes(buffer_bytes)} (2 GB buffer)\n"
+                f"  Available: {_format_bytes(free_temp)}"
+            )
+
+
 @guarded
 def run(args) -> int:
     prereq.ensure_root_or_reexec()
@@ -106,10 +160,13 @@ def run(args) -> int:
     lxc_path = f"{cfg.unpriv_base}/{user}"
     zfs_root = f"{cfg.zfs_pool}/lxc/unprivileged/{user}"
 
+    _check_disk_space(lxc_path, quota)
+
     print(
         f"--- Starting creation of unprivileged container: {name} "
         f"for user: {user} ---"
     )
+
 
     _configure_local_lxc(
         cfg, user, user_info, zfs_root, lxc_path, mapped_uid, mapped_range, args.dry_run
@@ -221,31 +278,51 @@ def _create_container(
 
 def _convert_rootfs_to_zfs(name, lxc_path, zfs_root, quota, mapped_uid, dry_run) -> None:
     container_dataset = f"{zfs_root}/{name}"
-    rootfs_path = f"{lxc_path}/{name}/rootfs"
+    rootfs_path = Path(lxc_path) / name / "rootfs"
     print(f"[5/7] Converting rootfs to ZFS dataset: {container_dataset}")
-    temp = Path(f"/tmp/lxc_rootfs_{name}")
     backend = zfs.ZFS()
 
+
     def convert() -> None:
-        if not Path(rootfs_path).exists():
-            raise prereq.PrereqError(
-                f"Error: rootfs not found at {rootfs_path} after container creation."
+        if not rootfs_path.is_dir():
+            raise prereq.PrereqError(f"Error: Container rootfs not found at {rootfs_path}")
+        if backend.exists(container_dataset):
+            raise prereq.PrereqError(f"Error: ZFS dataset already exists: {container_dataset}")
+
+        temp_dir = Path(tempfile.mkdtemp(prefix=f"lxc_rootfs_{name}_"))
+        tar_file = temp_dir / "rootfs.tar"
+        try:
+            # Archive existing rootfs preserving exact numeric UIDs/GIDs and permissions
+            subprocess.run(
+                ["tar", "-C", str(rootfs_path), "--numeric-owner", "-cpf", str(tar_file), "."],
+                check=True,
             )
-        if temp.exists():
-            shutil.rmtree(temp)
-        shutil.move(rootfs_path, temp)
-        backend.create(container_dataset, mountpoint=rootfs_path)
-        backend.mount(container_dataset)
-        if not os.path.ismount(rootfs_path):
-            raise prereq.PrereqError(
-                f"Error: Failed to mount ZFS dataset at {rootfs_path}"
+            shutil.rmtree(rootfs_path)
+
+            backend.create(container_dataset, mountpoint=rootfs_path)
+            backend.mount(container_dataset)
+            if not rootfs_path.is_dir():
+                raise prereq.PrereqError(
+                    f"Error: Failed to mount ZFS dataset at {rootfs_path}"
+                )
+            os.chown(rootfs_path, mapped_uid, mapped_uid)
+
+            if quota:
+                backend.set_quota(container_dataset, quota)
+
+            # Extract archive into newly mounted ZFS dataset
+            subprocess.run(
+                ["tar", "-C", str(rootfs_path), "--numeric-owner", "-xpf", str(tar_file)],
+                check=True,
             )
-        os.chown(rootfs_path, mapped_uid, mapped_uid)
-        if quota:
-            backend.set_quota(container_dataset, quota)
-        for item in temp.iterdir():
-            shutil.move(str(item), rootfs_path)
-        shutil.rmtree(temp)
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+        # Ensure /opt/project mountpoint exists inside container rootfs
+        mount_target = Path(rootfs_path) / "opt" / "project"
+        mount_target.mkdir(parents=True, exist_ok=True)
+        os.chown(Path(rootfs_path) / "opt", mapped_uid, mapped_uid)
+        os.chown(mount_target, mapped_uid, mapped_uid)
 
     prereq.dry_or(dry_run, "  Converting rootfs to ZFS dataset", convert)
 
@@ -275,4 +352,5 @@ def _print_summary(name, user, project_dir, lxc_path) -> None:
     print(f"User:           {user}")
     print(f"Host Path:      {project_dir}/{name}")
     print(f"To start it:    lxc-tools start {name}")
-    print(f"To attach:     lxc-attach -n {name} -P {lxc_path}")
+    print(f"To attach:     sudo lxc-attach -n {name} -P {lxc_path}")
+

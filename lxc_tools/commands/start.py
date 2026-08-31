@@ -71,7 +71,8 @@ def _verify(name, path, dry_run) -> None:
     print(f"Container '{name}' is active.")
     print("")
     print("To connect (Root Shell):")
-    print(f"  lxc-attach -n {name} -P {path}")
+    print(f"  sudo lxc-attach -n {name} -P {path}")
+
     print("")
     print("To connect (Console):")
     print(f"  lxc-console -n {name} -P {path}")
