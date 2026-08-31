@@ -35,6 +35,11 @@ native = [
     "pylibacl>=0.6",
 ]
 
+# MCP server (run: pip install -e ".[mcp]" && lxc-tools-mcp)
+mcp = [
+    "fastmcp>=2.0",
+]
+
 # Development / test tooling (run: pip install -e ".[test]" && pytest)
 test = [
     "pytest>=7",
@@ -42,6 +47,7 @@ test = [
 
 [project.scripts]
 lxc-tools = "lxc_tools.cli:main"
+lxc-tools-mcp = "lxc_tools.mcp_server:main"
 
 [tool.setuptools.packages.find]
 include = ["lxc_tools*"]
