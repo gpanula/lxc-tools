@@ -158,6 +158,44 @@ lxc-tools stop my-app --kill
 lxc-tools restart my-app
 ```
 
+### Snapshots & Rollback
+
+```bash
+# Take an instant snapshot (auto-generates timestamp tag if omitted)
+lxc-tools snapshot my-app
+lxc-tools snapshot my-app pre-upgrade
+
+# List all snapshots for a container
+lxc-tools snapshots my-app
+
+# Roll back container rootfs to a snapshot (stops, rolls back, and restarts if running)
+lxc-tools rollback my-app pre-upgrade
+
+# Roll back and leave container stopped
+lxc-tools rollback my-app pre-upgrade --no-restart
+
+# Preview snapshot or rollback actions
+lxc-tools --dry-run snapshot my-app
+lxc-tools --dry-run rollback my-app pre-upgrade
+```
+
+### Execute Commands in Container
+
+```bash
+# Execute command (creates automatic pre-execution snapshot by default)
+lxc-tools exec my-app -- apk add curl
+
+# Execute command with custom snapshot tag
+lxc-tools exec my-app --snapshot-tag before-nginx -- apk add nginx
+
+# Execute command without creating a snapshot (YOLO / read-only)
+lxc-tools exec my-app --no-snapshot -- whoami
+lxc-tools exec my-app --no-snapshot -- uname -a
+
+# Preview execution
+lxc-tools --dry-run exec my-app -- apk add git
+```
+
 ### Remove a Container
 
 ```bash
@@ -174,12 +212,76 @@ lxc-tools --dry-run remove my-app
 ### Connect to a Container
 
 ```bash
-# Root shell
-lxc-attach -n my-app -P /path/to/lxc
+# Root shell (requires sudo to transition into container namespaces)
+sudo lxc-attach -n my-app -P /path/to/lxc
 
 # Console
 lxc-console -n my-app -P /path/to/lxc
 ```
+
+
+## MCP Server (AI Agent Integration)
+
+A [FastMCP](https://github.com/punkpeye/fastmcp) server exposes `lxc-tools` as
+Model Context Protocol (MCP) tools, so an AI agent can inspect and manage LXC
+containers on localhost. It is a thin adapter that shells out to the `lxc-tools`
+CLI, preserving the existing sudoers trust model (no root daemon).
+
+### Install
+
+```bash
+pip install -e ".[mcp]"
+```
+
+### Run
+
+```bash
+lxc-tools-mcp                 # console script (stdio transport)
+python -m lxc_tools.mcp_server
+fastmcp run lxc_tools.mcp_server
+```
+
+### Exposed tools
+
+| Tool | Description |
+|---|---|
+| `create_container` | Create an unprivileged container (distro, release, arch, quota) |
+| `start_container` | Start a container |
+| `stop_container` | Stop a container (`kill` for hard shutdown) |
+| `restart_container` | Restart a container |
+| `list_containers` | List containers (`active` / `stopped` filters) |
+| `remove_container` | Remove a container (`force` skips confirmation) |
+| `snapshot_container` | Create a ZFS snapshot of a container's rootfs |
+| `rollback_container` | Roll back a container to a ZFS snapshot |
+| `list_snapshots` | List all ZFS snapshots for a container |
+| `exec_container` | Execute commands inside a running container (snapshots by default) |
+| `list_templates` | List available OS download templates and releases |
+| `container_info` | Read-only status for a single container |
+| `config_dump` | Read-only resolved configuration |
+
+Every mutating tool accepts `dry_run` to preview actions without executing
+destructive steps.
+
+
+
+### Client configuration
+
+Register the server in your MCP client (e.g. Claude Desktop, VS Code, or any
+MCP-compatible agent) using the stdio transport:
+
+```json
+{
+  "mcpServers": {
+    "lxc-tools": {
+      "command": "/path/to/.venv/bin/lxc-tools-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+> The server must run as a user who is a member of the `lxc-users` group and
+> has the sudoers NOPASSWD rule for `lxc-tools` (see [AGENT_SETUP.md](AGENT_SETUP.md)).
 
 ## Directory Layout
 
@@ -203,6 +305,7 @@ lxc-console -n my-app -P /path/to/lxc
 ```
 lxc_tools/
 ├── cli.py           # argparse dispatcher (lxc-tools entry point)
+├── mcp_server.py    # FastMCP server exposing lxc-tools as MCP tools
 ├── config.py        # INI configparser loader + env overrides + defaults
 ├── prereq.py        # sudo re-exec, identity, group gate, dependency checks
 ├── zfs.py           # native ZFS backend (pyzfs / libzfs_core)

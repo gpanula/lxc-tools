@@ -31,3 +31,10 @@ project_dir = /opt/project
 # Common values: lxcbr0 (default LXC bridge), br0, virbr0, or custom bridge name.
 # Default: lxcbr0
 bridge = lxcbr0
+
+[snapshots]
+# Automatically create a ZFS snapshot before running commands with 'lxc-tools exec'.
+# When set to false, snapshots are only created if --snapshot is explicitly passed.
+# Default: true
+exec_snapshot = true
+

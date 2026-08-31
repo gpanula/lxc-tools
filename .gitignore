@@ -13,6 +13,7 @@ lxc-tools.conf
 .vscode/
 .idea/
 *.iml
+.roo/
 
 # Python virtual environment
 .venv/

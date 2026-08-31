@@ -411,6 +411,57 @@ INI keys (sections are ignored; keys are matched case-insensitively):
 
 ---
 
+## 7.5 MCP server (AI agent integration)
+
+A [FastMCP](https://github.com/punkpeye/fastmcp) server exposes `lxc-tools` as
+MCP tools so an AI agent can inspect and manage LXC containers on localhost. It
+is a thin adapter that shells out to the `lxc-tools` CLI, so it inherits the
+existing sudoers trust model — **no root daemon is required**.
+
+### Install
+
+```bash
+pip install -e ".[mcp]"
+```
+
+### Run (stdio transport)
+
+```bash
+lxc-tools-mcp                 # console script
+python -m lxc_tools.mcp_server
+fastmcp run lxc_tools.mcp_server
+```
+
+### Tools
+
+`create_container`, `start_container`, `stop_container`, `restart_container`,
+`list_containers`, `remove_container`, `container_info` (read-only) and
+`config_dump` (read-only). Every mutating tool accepts `dry_run` to preview
+actions without executing destructive steps.
+
+### Client configuration
+
+Register the server in your MCP client using the stdio transport, pointing at
+the `lxc-tools-mcp` console script:
+
+```json
+{
+  "mcpServers": {
+    "lxc-tools": {
+      "command": "/path/to/.venv/bin/lxc-tools-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+> **Privilege note**: the server must run as a user who is a member of the
+> `lxc-users` group and has the sudoers NOPASSWD rule for `lxc-tools`. The
+> `lxc-tools-mcp` console script must be on the user's PATH so the CLI's
+> auto-sudo re-exec resolves to the linked path matching the sudoers rule.
+
+---
+
 ## 8. Verification checklist
 
 ### Non-privileged (any agent)
