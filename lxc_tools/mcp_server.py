@@ -19,9 +19,13 @@ Run the server with::
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+import tempfile
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 from fastmcp import FastMCP
@@ -34,6 +38,14 @@ SERVER_NAME = "lxc-tools"
 
 #: Console script invoked for every lifecycle operation.
 CLI_BINARY = "lxc-tools"
+
+#: Default timeout (seconds) for a single CLI invocation. Long-running
+#: operations (e.g. ``create``, which downloads a template and converts the
+#: rootfs to ZFS) can exceed an MCP client's own request timeout; without a
+#: bound here the server would block indefinitely and the client would sever
+#: the connection, orphaning the server process. Override with the
+#: ``LXC_MCP_TIMEOUT`` environment variable.
+DEFAULT_CLI_TIMEOUT = 300
 
 
 class MCPServerError(Exception):
@@ -74,15 +86,43 @@ def _resolve_cli() -> str:
     )
 
 
+def _cli_timeout() -> float:
+    """Return the CLI invocation timeout in seconds.
+
+    Reads ``LXC_MCP_TIMEOUT`` (seconds) from the environment, falling back to
+    ``DEFAULT_CLI_TIMEOUT``. A value <= 0 disables the timeout.
+    """
+    raw = os.environ.get("LXC_MCP_TIMEOUT")
+    if raw is None or raw == "":
+        return DEFAULT_CLI_TIMEOUT
+    try:
+        return float(raw)
+    except ValueError:
+        return DEFAULT_CLI_TIMEOUT
+
+
 def _run_cli(*args: str) -> CommandResult:
-    """Run ``lxc-tools <args>`` and capture its output."""
+    """Run ``lxc-tools <args>`` and capture its output.
+
+    A timeout bounds the call so a long-running operation (e.g. ``create``)
+    cannot block the server indefinitely and orphan the process when the MCP
+    client gives up waiting.
+    """
+    timeout = _cli_timeout()
     try:
         proc = subprocess.run(
             [_resolve_cli(), *args],
             capture_output=True,
             text=True,
             check=False,
+            timeout=timeout if timeout > 0 else None,
         )
+    except subprocess.TimeoutExpired as exc:
+        raise MCPServerError(
+            f"Command '{CLI_BINARY} {' '.join(args)}' timed out after "
+            f"{timeout:.0f}s. Increase LXC_MCP_TIMEOUT to allow longer "
+            "operations."
+        ) from exc
     except OSError as exc:
         raise MCPServerError(f"Failed to execute '{CLI_BINARY}': {exc}") from exc
     return CommandResult(
@@ -90,6 +130,30 @@ def _run_cli(*args: str) -> CommandResult:
         stdout=proc.stdout,
         stderr=proc.stderr,
     )
+
+
+def _spawn_background(*args: str) -> tuple[str, str]:
+    """Launch ``lxc-tools <args>`` detached and return ``(job_id, log_path)``.
+
+    The process is fully detached (new session, stdio redirected to a log file)
+    so it keeps running after the MCP tool returns. This lets long-running
+    operations (e.g. ``create``) run without blocking the MCP client.
+    """
+    job_id = f"{int(time.time())}-{os.getpid()}"
+    log_dir = Path(tempfile.gettempdir()) / "lxc-tools-mcp"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"{job_id}.log"
+
+    with open(log_path, "w", encoding="utf-8") as log:
+        subprocess.Popen(
+            [_resolve_cli(), *args],
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            close_fds=True,
+        )
+    return job_id, str(log_path)
 
 
 mcp = FastMCP(SERVER_NAME)
@@ -102,6 +166,9 @@ def create_container(
     release: str = "lts",
     arch: str = "amd64",
     quota: Optional[str] = None,
+    no_systemd: Optional[bool] = None,
+    systemd: bool = False,
+    background: bool = False,
     dry_run: bool = False,
 ) -> str:
     """Create an unprivileged LXC container with ZFS backing and a secure bind mount.
@@ -112,6 +179,13 @@ def create_container(
         release: Release codename or 'lts' (default: lts).
         arch: Architecture (default: amd64).
         quota: ZFS disk quota, e.g. '20G' (default: 10G).
+        no_systemd: Force the minimal init (brings up eth0 + DNS automatically).
+            Defaults to auto: systemd-based distros (ubuntu, debian, rockylinux,
+            almalinux) use the minimal init; alpine uses its own init.
+        systemd: Force systemd as PID 1 (opt out of the default minimal init).
+        background: Run the create in a detached background process and return
+            immediately with a job id and log path. Useful because create can
+            take minutes and exceed an MCP client's request timeout.
         dry_run: Preview actions without executing destructive steps.
     """
     # Always pass distro/release/arch positionally so a later quota never lands
@@ -120,8 +194,21 @@ def create_container(
     argv = ["create", name, distro, release, arch]
     if quota:
         argv.append(quota)
+    if systemd:
+        argv.append("--systemd")
+    elif no_systemd:
+        argv.append("--no-systemd")
     if dry_run:
         argv.append("--dry-run")
+
+    if background:
+        job_id, log_path = _spawn_background(*argv)
+        return (
+            f"Container creation '{name}' submitted in the background.\n"
+            f"job_id: {job_id}\n"
+            f"log:    {log_path}\n"
+            f"Monitor progress with: tail -f {log_path}"
+        )
     return _run_cli(*argv).summary()
 
 

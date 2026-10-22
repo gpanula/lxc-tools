@@ -126,6 +126,48 @@ lxc-tools create my-rocky rockylinux lts amd64 30G
 lxc-tools --dry-run create my-app
 ```
 
+#### Minimal init (default for systemd distros)
+
+Unprivileged systemd-based distros (e.g. Ubuntu) can fail to start when the host
+runs inside a cgroup v2 scope that does not delegate the `memory`/`pids`
+controllers — systemd exits immediately as PID 1, leaving the container with no
+networking or DNS.
+
+To handle this, `lxc-tools create` **defaults to a minimal init** for
+systemd-based distros (`ubuntu`, `debian`, `rockylinux`, `almalinux`). Alpine
+uses OpenRC and keeps its own init.
+
+```bash
+# Ubuntu: minimal init is applied automatically
+lxc-tools create my-app ubuntu noble amd64 20G
+
+# Alpine: no minimal init (OpenRC)
+lxc-tools create my-alpine alpine lts 50G
+```
+
+The minimal init script (`/usr/local/sbin/lxc-tools-init.sh` inside the
+container) does the following at boot:
+
+1. Brings up `eth0` and obtains a DHCP lease via `dhcpcd`.
+2. Writes the DHCP-provided DNS server (from `dhcpcd -U eth0`) to
+   `/etc/resolv.conf`, falling back to public resolvers (`1.1.1.1`, `8.8.8.8`)
+   only if DHCP advertises none.
+3. Keeps PID 1 alive with `sleep infinity`.
+
+#### Overriding the default
+
+```bash
+# Force the minimal init even on a non-systemd distro (e.g. alpine)
+lxc-tools create my-alpine alpine lts 50G --no-systemd
+
+# Force systemd (opt out of the default minimal init)
+lxc-tools create my-app ubuntu noble amd64 20G --systemd
+```
+
+Use `--systemd` only when the host delegates the `memory`/`pids` controllers to
+the container (e.g. a privileged container or a host with full cgroup v2
+delegation).
+
 ### List Containers
 
 ```bash
@@ -262,6 +304,38 @@ fastmcp run lxc_tools.mcp_server
 Every mutating tool accepts `dry_run` to preview actions without executing
 destructive steps.
 
+### Background creation
+
+`create_container` accepts a `background` flag. When `true`, the create runs in
+a **detached background process** and the tool returns immediately with a job id
+and a log path, so a long-running create (which can take minutes) never blocks
+or times out the MCP client:
+
+```json
+{ "name": "create_container", "arguments": { "name": "my-app", "background": true } }
+```
+
+The response includes a `job_id` and a `log` path; monitor progress with
+`tail -f <log>`. Logs are written under the system temp directory
+(`/tmp/lxc-tools-mcp/<job_id>.log`).
+
+### Timeout
+
+Each CLI invocation is bounded by a timeout (default **300 seconds**) so a
+long-running operation (e.g. `create`, which downloads a template and converts
+the rootfs to ZFS) cannot block the server indefinitely. If an operation
+exceeds the timeout, the tool returns a clear error instead of hanging.
+
+Override the timeout with the `LXC_MCP_TIMEOUT` environment variable (seconds):
+
+```bash
+LXC_MCP_TIMEOUT=600 lxc-tools-mcp
+```
+
+Set it to `0` to disable the timeout entirely. Note that your MCP client may
+have its own request timeout; if it is shorter than the operation, the client
+may still disconnect before the server finishes.
+
 
 
 ### Client configuration
@@ -326,6 +400,27 @@ lxc_tools/
 See [SECURITY.md](SECURITY.md) for detailed security considerations.
 
 ## Troubleshooting
+
+### Bind-mounted files appear as `nobody` and are unwritable inside the container
+
+The project directory is bind-mounted into the container at `/opt/project`. The
+container's root (UID 0) maps to the host's **mapped UID** (e.g. `100000`), so
+`lxc-tools create` owns the project directory and its contents by that mapped
+UID. This lets container root read and write the bind mount directly.
+
+If you copy files into the project directory **as the host user** (e.g. UID
+`1000`) *after* creation, those files map to an unmapped UID inside the
+container and appear as `nobody`, making them unwritable. Fix by re-owning them
+to the mapped UID on the host:
+
+```bash
+# Replace 100000 with the mapped UID from /etc/subuid for your user.
+sudo chown -R 100000:100000 /opt/project/<container-name>
+```
+
+> Do **not** add a disjoint `lxc.idmap = u 1000 1000 1` entry to the container
+> config. `newuidmap` requires a single contiguous uid_map block, so a second
+> disjoint range is rejected with `Invalid argument`.
 
 ### Container creation fails with "Couldn't find a matching image"
 

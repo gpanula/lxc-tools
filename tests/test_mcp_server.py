@@ -13,9 +13,12 @@ import pytest
 
 from lxc_tools import mcp_server
 from lxc_tools.mcp_server import (
+    DEFAULT_CLI_TIMEOUT,
     MCPServerError,
+    _cli_timeout,
     _resolve_cli,
     _run_cli,
+    _spawn_background,
     config_dump,
     container_info,
     create_container,
@@ -103,6 +106,43 @@ def test_create_container_dry_run(fake_cli):
     create_container("my-app", dry_run=True)
     assert fake_cli == [
         ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--dry-run"]
+    ]
+
+
+def test_create_container_no_systemd(fake_cli):
+    create_container("my-app", no_systemd=True)
+    assert fake_cli == [
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--no-systemd"]
+    ]
+
+
+def test_create_container_no_systemd_with_quota(fake_cli):
+    create_container("my-app", quota="20G", no_systemd=True)
+    assert fake_cli == [
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "20G", "--no-systemd"]
+    ]
+
+
+def test_create_container_systemd(fake_cli):
+    create_container("my-app", systemd=True)
+    assert fake_cli == [
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--systemd"]
+    ]
+
+
+def test_create_container_systemd_overrides_no_systemd(fake_cli):
+    create_container("my-app", no_systemd=True, systemd=True)
+    assert fake_cli == [
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--systemd"]
+    ]
+
+
+def test_create_container_auto_default_no_flag(fake_cli):
+    # Default (no_systemd=None, systemd=False) passes no flag; the CLI resolves
+    # the default from the distro.
+    create_container("my-app")
+    assert fake_cli == [
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64"]
     ]
 
 
@@ -259,6 +299,76 @@ def test_exec_container_custom_tag(fake_cli):
     assert fake_cli == [
         ["/usr/local/bin/lxc-tools", "exec", "my-app", "--snapshot-tag", "before-git", "--", "apk", "add", "git"]
     ]
+
+
+def test_cli_timeout_default(monkeypatch):
+    monkeypatch.delenv("LXC_MCP_TIMEOUT", raising=False)
+    assert _cli_timeout() == DEFAULT_CLI_TIMEOUT
+
+
+def test_cli_timeout_env_override(monkeypatch):
+    monkeypatch.setenv("LXC_MCP_TIMEOUT", "30")
+    assert _cli_timeout() == 30.0
+
+
+def test_cli_timeout_env_invalid_falls_back(monkeypatch):
+    monkeypatch.setenv("LXC_MCP_TIMEOUT", "not-a-number")
+    assert _cli_timeout() == DEFAULT_CLI_TIMEOUT
+
+
+def test_run_cli_timeout_raises(monkeypatch):
+    import subprocess as sp
+
+    monkeypatch.setattr(mcp_server, "_resolve_cli", lambda: "/usr/local/bin/lxc-tools")
+    monkeypatch.setenv("LXC_MCP_TIMEOUT", "1")
+
+    def fake_run(argv, **kwargs):
+        raise sp.TimeoutExpired(cmd=argv, timeout=1)
+
+    monkeypatch.setattr(sp, "run", fake_run)
+    with pytest.raises(MCPServerError, match="timed out"):
+        _run_cli("create", "x")
+
+
+def test_create_container_background(monkeypatch):
+    """background=True spawns detached and returns a job id + log path."""
+    monkeypatch.setattr(mcp_server, "_resolve_cli", lambda: "/usr/local/bin/lxc-tools")
+
+    captured = {}
+
+    def fake_popen(argv, **kwargs):
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return None
+
+    monkeypatch.setattr(mcp_server.subprocess, "Popen", fake_popen)
+
+    out = create_container("my-app", background=True)
+
+    assert "submitted in the background" in out
+    assert "job_id:" in out
+    assert "log:" in out
+    # The detached process is launched with the full create argv.
+    assert captured["argv"][:2] == ["/usr/local/bin/lxc-tools", "create"]
+    assert captured["kwargs"]["start_new_session"] is True
+
+
+def test_spawn_background_returns_job_and_log(monkeypatch, tmp_path):
+    """_spawn_background returns a job id and a log path under the temp dir."""
+    monkeypatch.setattr(mcp_server, "_resolve_cli", lambda: "/usr/local/bin/lxc-tools")
+    monkeypatch.setattr(
+        mcp_server.tempfile, "gettempdir", lambda: str(tmp_path)
+    )
+
+    def fake_popen(argv, **kwargs):
+        return None
+
+    monkeypatch.setattr(mcp_server.subprocess, "Popen", fake_popen)
+
+    job_id, log_path = _spawn_background("create", "my-app")
+    assert job_id
+    assert log_path.startswith(str(tmp_path / "lxc-tools-mcp"))
+    assert log_path.endswith(".log")
 
 
 
