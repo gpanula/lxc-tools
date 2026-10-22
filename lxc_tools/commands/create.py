@@ -21,6 +21,74 @@ from lxc_tools.prereq import require_binaries, require_member_of
 
 _BINARIES = ("lxc-create", "zfs", "newuidmap", "newgidmap")
 
+#: Distros that boot with systemd as PID 1. For unprivileged containers these
+#: default to the minimal init (``--no-systemd``) because systemd cannot run
+#: when the host cgroup v2 scope does not delegate the memory/pids controllers.
+#: Alpine uses OpenRC and is intentionally excluded.
+SYSTEMD_DISTROS = frozenset({"ubuntu", "debian", "rockylinux", "almalinux"})
+
+#: Path (inside the container rootfs) where the minimal init script is installed
+#: when ``--no-systemd`` is requested.
+_INIT_SCRIPT_PATH = "/usr/local/sbin/lxc-tools-init.sh"
+
+#: Minimal init script used when ``--no-systemd`` is requested. systemd cannot
+#: run as PID 1 in an unprivileged container when the host cgroup v2 scope does
+#: not delegate the memory/pids controllers, so this script brings up eth0 via
+#: dhcpcd, writes the DHCP-provided DNS server to /etc/resolv.conf (falling back
+#: to public resolvers only if DHCP provides none), and keeps PID 1 alive.
+_INIT_SCRIPT = """#!/bin/sh
+# Minimal init for lxc-tools containers created with --no-systemd.
+#
+# systemd cannot run as PID 1 here because the host cgroup v2 scope does not
+# delegate the memory/pids controllers. This script brings up networking and
+# DNS, then keeps PID 1 alive.
+
+set -u
+
+IFACE="eth0"
+
+log() { echo "[lxc-tools-init] $*"; }
+
+# --- Networking -----------------------------------------------------------
+# Bring the interface up and obtain a DHCP lease. dhcpcd daemonizes and keeps
+# renewing the lease in the background.
+if command -v dhcpcd >/dev/null 2>&1; then
+    ip link set "$IFACE" up 2>/dev/null || true
+    log "requesting DHCP lease on $IFACE"
+    dhcpcd -n "$IFACE" 2>&1 | sed 's/^/[lxc-tools-init] dhcpcd: /' || true
+else
+    log "WARNING: dhcpcd not found; $IFACE will not be configured"
+fi
+
+# --- DNS ------------------------------------------------------------------
+# /etc/resolv.conf is normally a symlink to systemd-resolved, which does not
+# run here. Prefer the DNS server advertised by DHCP (via `dhcpcd -U`); fall
+# back to public resolvers only if DHCP provides none.
+if [ -L /etc/resolv.conf ] || [ ! -s /etc/resolv.conf ]; then
+    rm -f /etc/resolv.conf
+fi
+if ! grep -q '^nameserver' /etc/resolv.conf 2>/dev/null; then
+    dns=""
+    if command -v dhcpcd >/dev/null 2>&1; then
+        dns=$(dhcpcd -U "$IFACE" 2>/dev/null | sed -n 's/^domain_name_servers=//p' | tr ' ' '\n' | head -1)
+    fi
+    if [ -n "$dns" ]; then
+        printf 'nameserver %s\n' "$dns" > /etc/resolv.conf
+        log "wrote DHCP-provided nameserver $dns to /etc/resolv.conf"
+    else
+        {
+            echo "nameserver 1.1.1.1"
+            echo "nameserver 8.8.8.8"
+        } > /etc/resolv.conf
+        log "no DHCP nameserver; wrote public fallback resolvers"
+    fi
+fi
+
+# --- Keep PID 1 alive -----------------------------------------------------
+log "network setup complete; entering idle"
+exec sleep infinity
+"""
+
 
 def normalize_create_args(
     distro: str, release: str, arch: str, quota: str | None
@@ -77,6 +145,26 @@ def add_parser(subparsers) -> None:
     parser.add_argument(
         "quota", nargs="?", default=None,
         help="ZFS disk quota for the container (e.g. 20G, default: 10G).",
+    )
+    parser.add_argument(
+        "--no-systemd",
+        action="store_true",
+        default=None,
+        help=(
+            "Use a minimal init instead of systemd. This is the default for "
+            "systemd-based distros (ubuntu, debian, rockylinux, almalinux) "
+            "because systemd cannot run as PID 1 in an unprivileged container "
+            "when the host cgroup v2 scope does not delegate the memory/pids "
+            "controllers. The init script brings up eth0 and DNS automatically."
+        ),
+    )
+    parser.add_argument(
+        "--systemd",
+        action="store_true",
+        help=(
+            "Force systemd as PID 1 (opt out of the default minimal init). "
+            "Only use this when the host delegates the memory/pids controllers."
+        ),
     )
     parser.set_defaults(func=run)
 
@@ -174,13 +262,30 @@ def run(args) -> int:
     _ensure_zfs_dataset(
         cfg, user, user_info, zfs_root, lxc_path, mapped_uid, args.dry_run
     )
-    _ensure_project_dir(cfg, user, user_info, name, args.dry_run)
+    _ensure_project_dir(cfg, user, user_info, name, mapped_uid, args.dry_run)
     _apply_acls(cfg, mapped_uid, name, args.dry_run)
     _create_container(name, lxc_path, distro_name, release, arch, user, args.dry_run)
     _convert_rootfs_to_zfs(name, lxc_path, zfs_root, quota, mapped_uid, args.dry_run)
     _add_bind_mount(cfg, name, lxc_path, args.dry_run)
+    if _resolve_no_systemd(args, distro_name):
+        _configure_init(name, lxc_path, mapped_uid, args.dry_run)
     _print_summary(name, user, cfg.project_dir, lxc_path)
     return 0
+
+
+def _resolve_no_systemd(args, distro_name: str) -> bool:
+    """Resolve whether to use the minimal init for a container.
+
+    Precedence:
+    1. ``--systemd`` forces systemd (returns False).
+    2. ``--no-systemd`` forces the minimal init (returns True).
+    3. Otherwise, systemd-based distros default to the minimal init.
+    """
+    if getattr(args, "systemd", False):
+        return False
+    if getattr(args, "no_systemd", False):
+        return True
+    return distro_name.lower() in SYSTEMD_DISTROS
 
 
 def _configure_local_lxc(
@@ -243,14 +348,22 @@ def _ensure_zfs_dataset(
     prereq.dry_or(dry_run, f"  Creating dataset {zfs_root}", create_dataset)
 
 
-def _ensure_project_dir(cfg, user, user_info, name, dry_run) -> None:
+def _ensure_project_dir(cfg, user, user_info, name, mapped_uid, dry_run) -> None:
     subdir = Path(cfg.project_dir) / name
-    if subdir.is_dir():
-        return
 
     def create_dir() -> None:
         subdir.mkdir(parents=True, exist_ok=True)
-        os.chown(subdir, user_info.uid, user_info.gid)
+        # Own the project directory (and any pre-existing contents) by the
+        # mapped UID so the container's root (UID 0 -> mapped_uid) can read and
+        # write the bind mount directly. Without this, files copied in by the
+        # host user (e.g. UID 1000) map to an unmapped UID inside the container
+        # and appear as 'nobody', making them unwritable.
+        os.chown(subdir, mapped_uid, mapped_uid)
+        for path in subdir.rglob("*"):
+            try:
+                os.chown(path, mapped_uid, mapped_uid)
+            except PermissionError:
+                pass
 
     prereq.dry_or(dry_run, f"[2/7] Creating project directory: {subdir}", create_dir)
 
@@ -343,6 +456,49 @@ def _add_bind_mount(cfg, name, lxc_path, dry_run) -> None:
             handle.write(f"\n# Bind mount for project files\n{mount_entry}\n")
 
     prereq.dry_or(dry_run, "  Adding bind mount", add_mount)
+
+
+def _configure_init(name, lxc_path, mapped_uid, dry_run) -> None:
+    """Install a minimal init script and point ``lxc.init.cmd`` at it.
+
+    Used when ``--no-systemd`` is requested. systemd cannot run as PID 1 in an
+    unprivileged container when the host cgroup v2 scope does not delegate the
+    memory/pids controllers, so a minimal init brings up eth0 + DNS and keeps
+    PID 1 alive instead.
+    """
+    config_file = Path(lxc_path) / name / "config"
+    rootfs_path = Path(lxc_path) / name / "rootfs"
+    init_target = rootfs_path / _INIT_SCRIPT_PATH.lstrip("/")
+    print(f"[6/7] Installing minimal init script ({_INIT_SCRIPT_PATH})")
+
+    def install() -> None:
+        if not config_file.exists():
+            raise prereq.PrereqError(f"Error: Container config not found at {config_file}")
+        if not rootfs_path.is_dir():
+            raise prereq.PrereqError(f"Error: Container rootfs not found at {rootfs_path}")
+
+        # Write the init script into the rootfs and make it executable.
+        init_target.parent.mkdir(parents=True, exist_ok=True)
+        init_target.write_text(_INIT_SCRIPT, encoding="utf-8")
+        init_target.chmod(0o755)
+        # Best-effort ownership: only meaningful when running as root (the real
+        # create flow). Ignore failure so unit tests can run unprivileged.
+        try:
+            os.chown(init_target, mapped_uid, mapped_uid)
+        except PermissionError:
+            pass
+
+        # Point lxc.init.cmd at the script (idempotent).
+        content = config_file.read_text(encoding="utf-8")
+        if "lxc.init.cmd" in content:
+            return
+        with config_file.open("a", encoding="utf-8") as handle:
+            handle.write(
+                "\n# Minimal init (--no-systemd): systemd cannot run as PID 1 here\n"
+                f"lxc.init.cmd = {_INIT_SCRIPT_PATH}\n"
+            )
+
+    prereq.dry_or(dry_run, "  Installing minimal init script", install)
 
 
 def _print_summary(name, user, project_dir, lxc_path) -> None:
