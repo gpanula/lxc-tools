@@ -168,6 +168,51 @@ Use `--systemd` only when the host delegates the `memory`/`pids` controllers to
 the container (e.g. a privileged container or a host with full cgroup v2
 delegation).
 
+#### Static MAC address
+
+Give the container a stable MAC so its DHCP lease (and any DHCP reservation) is
+consistent across restarts:
+
+```bash
+lxc-tools create my-app ubuntu noble amd64 20G --mac 02:16:3e:aa:bb:cc
+```
+
+#### First-boot provisioning (user, SSH, sudo)
+
+`lxc-tools create` can provision the container on first boot via a lightweight
+script (a cloud-init equivalent) that runs inside the container after networking
+is up. The following options are available:
+
+| Option | Effect |
+|--------|--------|
+| `--user <name>` | Create a non-root user (same name across distros) |
+| `--ssh-key <pubkey>` | Append a public key to the user's `authorized_keys` |
+| `--install-sshd` | Install `openssh-server` on first boot |
+| `--start-sshd` | Start `sshd` automatically on boot |
+| `--sudo` | Grant the user sudo access |
+| `--nopasswd-sudo` | Grant the user password-less sudo |
+| `--allow-tcp-forwarding` | Configure sshd with `AllowTcpForwarding yes` |
+
+```bash
+# Create a dev container with a user, SSH key, sshd, and password-less sudo
+lxc-tools create my-app ubuntu noble amd64 20G \
+  --user dev \
+  --ssh-key "ssh-ed25519 AAAAC3... dev@host" \
+  --install-sshd \
+  --start-sshd \
+  --sudo \
+  --nopasswd-sudo
+```
+
+The provisioning script (`/usr/local/sbin/lxc-tools-provision.sh`) runs once on
+first boot (guarded by a marker file) and is invoked by the minimal init.
+
+> **Note:** first-boot provisioning currently only runs under the **minimal
+> init** (the default for systemd-based distros). It is **not yet wired into
+> systemd** — if you force `--systemd`, the provisioning script is written to
+> the rootfs but will not run automatically. Use the minimal init (default) for
+> containers that need user/SSH/sudo provisioning.
+
 ### List Containers
 
 ```bash

@@ -146,6 +146,31 @@ def test_create_container_auto_default_no_flag(fake_cli):
     ]
 
 
+def test_create_container_provisioning_flags(fake_cli):
+    create_container(
+        "my-app",
+        mac="02:16:3e:aa:bb:cc",
+        install_sshd=True,
+        start_sshd=True,
+        ssh_key="ssh-ed25519 AAAAtest",
+        user="dev",
+        sudo=True,
+        nopasswd_sudo=True,
+    )
+    assert fake_cli == [
+        [
+            "/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64",
+            "--mac", "02:16:3e:aa:bb:cc",
+            "--install-sshd",
+            "--start-sshd",
+            "--ssh-key", "ssh-ed25519 AAAAtest",
+            "--user", "dev",
+            "--sudo",
+            "--nopasswd-sudo",
+        ]
+    ]
+
+
 def test_start_container(fake_cli):
     start_container("my-app")
     assert fake_cli == [["/usr/local/bin/lxc-tools", "start", "my-app"]]

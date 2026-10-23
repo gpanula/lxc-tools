@@ -168,6 +168,14 @@ def create_container(
     quota: Optional[str] = None,
     no_systemd: Optional[bool] = None,
     systemd: bool = False,
+    mac: Optional[str] = None,
+    install_sshd: bool = False,
+    start_sshd: bool = False,
+    ssh_key: Optional[str] = None,
+    user: Optional[str] = None,
+    sudo: bool = False,
+    nopasswd_sudo: bool = False,
+    allow_tcp_forwarding: bool = False,
     background: bool = False,
     dry_run: bool = False,
 ) -> str:
@@ -183,6 +191,14 @@ def create_container(
             Defaults to auto: systemd-based distros (ubuntu, debian, rockylinux,
             almalinux) use the minimal init; alpine uses its own init.
         systemd: Force systemd as PID 1 (opt out of the default minimal init).
+        mac: Static MAC address for eth0 (e.g. '02:16:3e:aa:bb:cc').
+        install_sshd: Install openssh-server on first boot.
+        start_sshd: Start sshd automatically on boot.
+        ssh_key: Public SSH key to append to the default user's authorized_keys.
+        user: Create a non-root user with this name (same across distros).
+        sudo: Grant the created user sudo access.
+        nopasswd_sudo: Grant the created user password-less sudo access.
+        allow_tcp_forwarding: Configure sshd with 'AllowTcpForwarding yes'.
         background: Run the create in a detached background process and return
             immediately with a job id and log path. Useful because create can
             take minutes and exceed an MCP client's request timeout.
@@ -198,6 +214,22 @@ def create_container(
         argv.append("--systemd")
     elif no_systemd:
         argv.append("--no-systemd")
+    if mac:
+        argv.extend(["--mac", mac])
+    if install_sshd:
+        argv.append("--install-sshd")
+    if start_sshd:
+        argv.append("--start-sshd")
+    if ssh_key:
+        argv.extend(["--ssh-key", ssh_key])
+    if user:
+        argv.extend(["--user", user])
+    if sudo:
+        argv.append("--sudo")
+    if nopasswd_sudo:
+        argv.append("--nopasswd-sudo")
+    if allow_tcp_forwarding:
+        argv.append("--allow-tcp-forwarding")
     if dry_run:
         argv.append("--dry-run")
 

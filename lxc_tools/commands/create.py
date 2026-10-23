@@ -62,15 +62,22 @@ fi
 
 # --- DNS ------------------------------------------------------------------
 # /etc/resolv.conf is normally a symlink to systemd-resolved, which does not
-# run here. Prefer the DNS server advertised by DHCP (via `dhcpcd -U`); fall
-# back to public resolvers only if DHCP provides none.
+# run here. Prefer the DNS server advertised by DHCP (via `dhcpcd -U`); retry
+# briefly because the lease may not be fully established yet. Fall back to
+# public resolvers only if DHCP provides none.
 if [ -L /etc/resolv.conf ] || [ ! -s /etc/resolv.conf ]; then
     rm -f /etc/resolv.conf
 fi
 if ! grep -q '^nameserver' /etc/resolv.conf 2>/dev/null; then
     dns=""
     if command -v dhcpcd >/dev/null 2>&1; then
-        dns=$(dhcpcd -U "$IFACE" 2>/dev/null | sed -n 's/^domain_name_servers=//p' | tr ' ' '\n' | head -1)
+        i=0
+        while [ "$i" -lt 10 ]; do
+            dns=$(dhcpcd -U "$IFACE" 2>/dev/null | sed -n 's/^domain_name_servers=//p' | tr ' ' '\n' | head -1)
+            [ -n "$dns" ] && break
+            i=$((i + 1))
+            sleep 1
+        done
     fi
     if [ -n "$dns" ]; then
         printf 'nameserver %s\n' "$dns" > /etc/resolv.conf
@@ -84,10 +91,150 @@ if ! grep -q '^nameserver' /etc/resolv.conf 2>/dev/null; then
     fi
 fi
 
+# --- First-boot provisioning ----------------------------------------------
+# Run the provisioning script (user/ssh/sudo setup) once, if present.
+if [ -x /usr/local/sbin/lxc-tools-provision.sh ]; then
+    /usr/local/sbin/lxc-tools-provision.sh 2>&1 | sed 's/^/[lxc-tools-init] /' || true
+fi
+
 # --- Keep PID 1 alive -----------------------------------------------------
 log "network setup complete; entering idle"
 exec sleep infinity
 """
+
+#: Path (inside the container rootfs) where the first-boot provisioning script
+#: is installed when any of the user/ssh/sudo options are requested.
+_PROVISION_SCRIPT_PATH = "/usr/local/sbin/lxc-tools-provision.sh"
+
+#: Marker file that prevents the provisioning script from running more than once.
+_PROVISION_MARKER = "/var/lib/lxc-tools-provisioned"
+
+
+def _build_provision_script(
+    *,
+    install_sshd: bool,
+    start_sshd: bool,
+    ssh_key: str | None,
+    username: str | None,
+    sudo: bool,
+    nopasswd_sudo: bool,
+    allow_tcp_forwarding: bool = False,
+) -> str:
+    """Build the first-boot provisioning shell script.
+
+    The script runs inside the container on first boot (invoked by the minimal
+    init, or a one-shot systemd unit). It is idempotent via a marker file.
+    """
+    lines = [
+        "#!/bin/sh",
+        "# First-boot provisioning for lxc-tools containers.",
+        "# Runs once (guarded by a marker file) to create a user, install/start",
+        "# sshd, install an SSH key, and configure sudo.",
+        "",
+        "set -u",
+        "",
+        'MARKER="%s"' % _PROVISION_MARKER,
+        'log() { echo "[lxc-tools-provision] $*"; }',
+        "",
+        'if [ -f "$MARKER" ]; then',
+        '    log "already provisioned; exiting"',
+        "    exit 0",
+        "fi",
+        "",
+    ]
+
+    if install_sshd:
+        lines += [
+            "# --- Install openssh-server -------------------------------------",
+            'if command -v apt-get >/dev/null 2>&1; then',
+            '    export DEBIAN_FRONTEND=noninteractive',
+            '    apt-get update -qq >/dev/null 2>&1 || true',
+            '    apt-get install -y -qq openssh-server >/dev/null 2>&1 || true',
+            'elif command -v apk >/dev/null 2>&1; then',
+            '    apk add --no-cache openssh >/dev/null 2>&1 || true',
+            'elif command -v dnf >/dev/null 2>&1; then',
+            '    dnf install -y openssh-server >/dev/null 2>&1 || true',
+            "fi",
+            'log "openssh-server install attempted"',
+            "",
+        ]
+
+    if username:
+        lines += [
+            "# --- Create user ------------------------------------------------",
+            'if ! id "%s" >/dev/null 2>&1; then' % username,
+            '    if command -v useradd >/dev/null 2>&1; then',
+            '        useradd -m -s /bin/bash "%s"' % username,
+            '    elif command -v adduser >/dev/null 2>&1; then',
+            '        adduser -D -s /bin/bash "%s"' % username,
+            "    fi",
+            '    log "created user %s"' % username,
+            "fi",
+            "",
+        ]
+
+    if ssh_key:
+        # Determine the target user: the created user if given, else root.
+        target = username if username else "root"
+        home = "/home/%s" % username if username else "/root"
+        lines += [
+            "# --- Install SSH key --------------------------------------------",
+            'mkdir -p "%s/.ssh"' % home,
+            'chmod 700 "%s/.ssh"' % home,
+            'printf "%%s\\n" "%s" >> "%s/.ssh/authorized_keys"' % (ssh_key, home),
+            'chmod 600 "%s/.ssh/authorized_keys"' % home,
+            'chown -R %s:%s "%s/.ssh"' % (target, target, home),
+            'log "installed SSH key for %s"' % target,
+            "",
+        ]
+
+    if sudo and username:
+        lines += [
+            "# --- Grant sudo -------------------------------------------------",
+            'if command -v usermod >/dev/null 2>&1; then',
+            '    usermod -aG sudo "%s" 2>/dev/null || usermod -aG wheel "%s" 2>/dev/null || true' % (username, username),
+            "fi",
+            'log "granted sudo to %s"' % username,
+            "",
+        ]
+
+    if nopasswd_sudo and username:
+        lines += [
+            "# --- Password-less sudo -----------------------------------------",
+            'mkdir -p /etc/sudoers.d',
+            'printf "%%s ALL=(ALL) NOPASSWD:ALL\\n" "%s" > /etc/sudoers.d/90-%s' % (username, username),
+            'chmod 440 /etc/sudoers.d/90-%s' % username,
+            'log "granted password-less sudo to %s"' % username,
+            "",
+        ]
+
+    if allow_tcp_forwarding:
+        lines += [
+            "# --- Configure sshd: AllowTcpForwarding -------------------------",
+            'mkdir -p /etc/ssh/sshd_config.d',
+            'printf "AllowTcpForwarding yes\\n" > /etc/ssh/sshd_config.d/90-lxc-tools.conf',
+            'log "configured AllowTcpForwarding yes"',
+            "",
+        ]
+
+    if start_sshd:
+        lines += [
+            "# --- Start sshd --------------------------------------------------",
+            'if command -v sshd >/dev/null 2>&1; then',
+            "    mkdir -p /run/sshd",
+            "    chmod 755 /run/sshd",
+            "    ssh-keygen -A >/dev/null 2>&1 || true",
+            "    /usr/sbin/sshd 2>/dev/null || sshd 2>/dev/null || true",
+            '    log "started sshd"',
+            "fi",
+            "",
+        ]
+
+    lines += [
+        'touch "$MARKER"',
+        'log "provisioning complete"',
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def normalize_create_args(
@@ -165,6 +312,49 @@ def add_parser(subparsers) -> None:
             "Force systemd as PID 1 (opt out of the default minimal init). "
             "Only use this when the host delegates the memory/pids controllers."
         ),
+    )
+    parser.add_argument(
+        "--mac",
+        metavar="ADDR",
+        default=None,
+        help="Static MAC address for the container's eth0 (e.g. 02:16:3e:aa:bb:cc).",
+    )
+    parser.add_argument(
+        "--install-sshd",
+        action="store_true",
+        help="Install openssh-server on first boot.",
+    )
+    parser.add_argument(
+        "--start-sshd",
+        action="store_true",
+        help="Start sshd automatically on boot (wired into the init).",
+    )
+    parser.add_argument(
+        "--ssh-key",
+        metavar="PUBKEY",
+        default=None,
+        help="Public SSH key to append to the default user's authorized_keys.",
+    )
+    parser.add_argument(
+        "--user",
+        metavar="NAME",
+        default=None,
+        help="Create a non-root user with this name (same across distros).",
+    )
+    parser.add_argument(
+        "--sudo",
+        action="store_true",
+        help="Grant the created user sudo access.",
+    )
+    parser.add_argument(
+        "--nopasswd-sudo",
+        action="store_true",
+        help="Grant the created user password-less sudo access.",
+    )
+    parser.add_argument(
+        "--allow-tcp-forwarding",
+        action="store_true",
+        help="Configure sshd with 'AllowTcpForwarding yes'.",
     )
     parser.set_defaults(func=run)
 
@@ -267,10 +457,25 @@ def run(args) -> int:
     _create_container(name, lxc_path, distro_name, release, arch, user, args.dry_run)
     _convert_rootfs_to_zfs(name, lxc_path, zfs_root, quota, mapped_uid, args.dry_run)
     _add_bind_mount(cfg, name, lxc_path, args.dry_run)
+    if getattr(args, "mac", None):
+        _configure_mac(name, lxc_path, args.mac, args.dry_run)
     if _resolve_no_systemd(args, distro_name):
         _configure_init(name, lxc_path, mapped_uid, args.dry_run)
+    if _has_provisioning(args):
+        _configure_provisioning(name, lxc_path, mapped_uid, args, args.dry_run)
     _print_summary(name, user, cfg.project_dir, lxc_path)
     return 0
+
+
+def _has_provisioning(args) -> bool:
+    """Return True if any first-boot provisioning option was requested."""
+    return any(
+        getattr(args, attr, None)
+        for attr in (
+            "install_sshd", "start_sshd", "ssh_key", "user", "sudo",
+            "nopasswd_sudo", "allow_tcp_forwarding",
+        )
+    )
 
 
 def _resolve_no_systemd(args, distro_name: str) -> bool:
@@ -499,6 +704,57 @@ def _configure_init(name, lxc_path, mapped_uid, dry_run) -> None:
             )
 
     prereq.dry_or(dry_run, "  Installing minimal init script", install)
+
+
+def _configure_mac(name, lxc_path, mac, dry_run) -> None:
+    """Add a static MAC address to the container config."""
+    config_file = Path(lxc_path) / name / "config"
+    print(f"[6/7] Setting static MAC address {mac}")
+
+    def set_mac() -> None:
+        if not config_file.exists():
+            raise prereq.PrereqError(f"Error: Container config not found at {config_file}")
+        content = config_file.read_text(encoding="utf-8")
+        if "lxc.net.0.hwaddr" in content:
+            return
+        with config_file.open("a", encoding="utf-8") as handle:
+            handle.write(f"\n# Static MAC address\nlxc.net.0.hwaddr = {mac}\n")
+
+    prereq.dry_or(dry_run, "  Setting static MAC address", set_mac)
+
+
+def _configure_provisioning(name, lxc_path, mapped_uid, args, dry_run) -> None:
+    """Write the first-boot provisioning script into the rootfs.
+
+    The script is invoked by the minimal init on first boot (or a one-shot
+    systemd unit for systemd containers) and performs user/ssh/sudo setup.
+    """
+    rootfs_path = Path(lxc_path) / name / "rootfs"
+    provision_target = rootfs_path / _PROVISION_SCRIPT_PATH.lstrip("/")
+    print(f"[6/7] Installing first-boot provisioning script ({_PROVISION_SCRIPT_PATH})")
+
+    script = _build_provision_script(
+        install_sshd=bool(getattr(args, "install_sshd", False)),
+        start_sshd=bool(getattr(args, "start_sshd", False)),
+        ssh_key=getattr(args, "ssh_key", None),
+        username=getattr(args, "user", None),
+        sudo=bool(getattr(args, "sudo", False)),
+        nopasswd_sudo=bool(getattr(args, "nopasswd_sudo", False)),
+        allow_tcp_forwarding=bool(getattr(args, "allow_tcp_forwarding", False)),
+    )
+
+    def install() -> None:
+        if not rootfs_path.is_dir():
+            raise prereq.PrereqError(f"Error: Container rootfs not found at {rootfs_path}")
+        provision_target.parent.mkdir(parents=True, exist_ok=True)
+        provision_target.write_text(script, encoding="utf-8")
+        provision_target.chmod(0o755)
+        try:
+            os.chown(provision_target, mapped_uid, mapped_uid)
+        except PermissionError:
+            pass
+
+    prereq.dry_or(dry_run, "  Installing first-boot provisioning script", install)
 
 
 def _print_summary(name, user, project_dir, lxc_path) -> None:
