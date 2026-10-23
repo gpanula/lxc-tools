@@ -8,10 +8,15 @@ import pytest
 from lxc_tools.commands.create import (
     _INIT_SCRIPT,
     _INIT_SCRIPT_PATH,
+    _PROVISION_SCRIPT_PATH,
+    _build_provision_script,
     _check_disk_space,
     _configure_init,
+    _configure_mac,
+    _configure_provisioning,
     _ensure_project_dir,
     _format_bytes,
+    _has_provisioning,
     _parse_size_bytes,
     _resolve_no_systemd,
     normalize_create_args,
@@ -212,6 +217,119 @@ def test_ensure_project_dir_chowns_to_mapped_uid(tmp_path, monkeypatch):
     assert (str(project_dir / "my-app"), 100000, 100000) in chown_calls
     # The pre-existing file is also chowned to the mapped UID.
     assert (str(existing), 100000, 100000) in chown_calls
+
+
+class _ProvisionArgs:
+    def __init__(self, **kwargs):
+        defaults = {
+            "install_sshd": False,
+            "start_sshd": False,
+            "ssh_key": None,
+            "user": None,
+            "sudo": False,
+            "nopasswd_sudo": False,
+        }
+        defaults.update(kwargs)
+        for k, v in defaults.items():
+            setattr(self, k, v)
+
+
+def test_has_provisioning_false_by_default():
+    assert _has_provisioning(_ProvisionArgs()) is False
+
+
+def test_has_provisioning_true_when_user_set():
+    assert _has_provisioning(_ProvisionArgs(user="dev")) is True
+
+
+def test_has_provisioning_true_when_install_sshd():
+    assert _has_provisioning(_ProvisionArgs(install_sshd=True)) is True
+
+
+def test_build_provision_script_user_and_ssh_key():
+    script = _build_provision_script(
+        install_sshd=False,
+        start_sshd=False,
+        ssh_key="ssh-ed25519 AAAAtest",
+        username="dev",
+        sudo=False,
+        nopasswd_sudo=False,
+    )
+    assert 'useradd -m -s /bin/bash "dev"' in script
+    assert "ssh-ed25519 AAAAtest" in script
+    assert "/home/dev/.ssh/authorized_keys" in script
+
+
+def test_build_provision_script_sudo_and_nopasswd():
+    script = _build_provision_script(
+        install_sshd=False,
+        start_sshd=False,
+        ssh_key=None,
+        username="dev",
+        sudo=True,
+        nopasswd_sudo=True,
+    )
+    assert 'usermod -aG sudo "dev"' in script
+    assert "/etc/sudoers.d/90-dev" in script
+    assert "NOPASSWD:ALL" in script
+
+
+def test_build_provision_script_install_and_start_sshd():
+    script = _build_provision_script(
+        install_sshd=True,
+        start_sshd=True,
+        ssh_key=None,
+        username=None,
+        sudo=False,
+        nopasswd_sudo=False,
+    )
+    assert "openssh-server" in script
+    assert "/usr/sbin/sshd" in script
+    assert "chmod 755 /run/sshd" in script
+
+
+def test_build_provision_script_allow_tcp_forwarding():
+    script = _build_provision_script(
+        install_sshd=False,
+        start_sshd=False,
+        ssh_key=None,
+        username=None,
+        sudo=False,
+        nopasswd_sudo=False,
+        allow_tcp_forwarding=True,
+    )
+    assert "AllowTcpForwarding yes" in script
+    assert "/etc/ssh/sshd_config.d/90-lxc-tools.conf" in script
+
+
+def test_configure_mac_writes_hwaddr(tmp_path):
+    name = "my-app"
+    lxc_path = tmp_path / "lxc"
+    container_dir = lxc_path / name
+    container_dir.mkdir(parents=True)
+    config_file = container_dir / "config"
+    config_file.write_text("lxc.uts.name = my-app\n", encoding="utf-8")
+
+    _configure_mac(name, str(lxc_path), "02:16:3e:aa:bb:cc", dry_run=False)
+
+    content = config_file.read_text(encoding="utf-8")
+    assert "lxc.net.0.hwaddr = 02:16:3e:aa:bb:cc" in content
+
+
+def test_configure_provisioning_writes_script(tmp_path):
+    name = "my-app"
+    lxc_path = tmp_path / "lxc"
+    rootfs = lxc_path / name / "rootfs"
+    rootfs.mkdir(parents=True)
+
+    args = _ProvisionArgs(user="dev", ssh_key="ssh-ed25519 AAAAtest", sudo=True)
+    _configure_provisioning(name, str(lxc_path), 100000, args, dry_run=False)
+
+    target = rootfs / _PROVISION_SCRIPT_PATH.lstrip("/")
+    assert target.is_file()
+    content = target.read_text(encoding="utf-8")
+    assert 'useradd -m -s /bin/bash "dev"' in content
+    assert target.stat().st_mode & 0o111
 
 
 
