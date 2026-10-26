@@ -693,14 +693,33 @@ def _configure_init(name, lxc_path, mapped_uid, dry_run) -> None:
         except PermissionError:
             pass
 
-        # Point lxc.init.cmd at the script (idempotent).
+        # Point lxc.init.cmd at the script and capture PID 1 output (idempotent).
+        #
+        # The console keys are what make an init failure diagnosable: without
+        # them a container whose init dies is simply "STOPPED" with no trace.
+        #
+        # ``lxc.console.logfile`` MUST be absolute. A relative value resolves
+        # against the caller's working directory, not the container directory,
+        # so the log would land wherever lxc-start happened to be invoked.
+        #
+        # ``lxc.console.size`` is parsed as a bare byte count unless suffixed
+        # with K/M/G; "4M" is rejected and silently clamped to 4096 bytes.
+        console_log = Path(lxc_path) / name / "console.log"
         content = config_file.read_text(encoding="utf-8")
-        if "lxc.init.cmd" in content:
+        if "lxc.console.logfile" in content:
             return
         with config_file.open("a", encoding="utf-8") as handle:
+            if "lxc.init.cmd" not in content:
+                handle.write(
+                    "\n# Minimal init (--no-systemd): systemd cannot run as PID 1 here\n"
+                    f"lxc.init.cmd = {_INIT_SCRIPT_PATH}\n"
+                )
             handle.write(
-                "\n# Minimal init (--no-systemd): systemd cannot run as PID 1 here\n"
-                f"lxc.init.cmd = {_INIT_SCRIPT_PATH}\n"
+                "\n# Capture PID 1 stdout/stderr so init failures are diagnosable.\n"
+                f"lxc.console.logfile = {console_log}\n"
+                "lxc.console.size = 4096K\n"
+                "lxc.console.rotate = 1\n"
+                "lxc.tty.max = 4\n"
             )
 
     prereq.dry_or(dry_run, "  Installing minimal init script", install)
@@ -764,5 +783,7 @@ def _print_summary(name, user, project_dir, lxc_path) -> None:
     print(f"User:           {user}")
     print(f"Host Path:      {project_dir}/{name}")
     print(f"To start it:    lxc-tools start {name}")
-    print(f"To attach:     sudo lxc-attach -n {name} -P {lxc_path}")
+    print(f"To attach:      lxc-tools attach {name}")
+    print(f"To console:     lxc-tools console {name}")
+    print(f"Console log:    lxc-tools console-log {name}")
 

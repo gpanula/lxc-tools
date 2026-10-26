@@ -492,6 +492,22 @@ def exec_container(
     return _run_cli(*argv).summary()
 
 
+@mcp.tool()
+def console_log(name: str, lines: int = 100) -> str:
+    """Read a container's captured console/init output.
+
+    The console log captures PID 1 stdout/stderr, so it is the primary way to
+    diagnose a container whose init (or sshd) failed to start. Note that
+    ``attach`` and ``console`` are interactive and therefore not exposed as
+    MCP tools.
+
+    Args:
+        name: Container name.
+        lines: Number of trailing lines to return (default: 100).
+    """
+    return _run_cli("console-log", name, "--lines", str(lines)).summary()
+
+
 def main() -> None:
     """Entry point: run the FastMCP server over stdio."""
     mcp.run()

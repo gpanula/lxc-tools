@@ -47,6 +47,39 @@ def find_container_path(cfg: Config, name: str) -> str | None:
     return None
 
 
+def resolve_container_path(cfg: Config, name: str, user: str) -> str:
+    """Return the LXC path holding ``name`` for the acting ``user``.
+
+    Root searches the privileged tier and then every user tier; a regular user
+    is confined to their own unprivileged path. Raises ``PrereqError`` when the
+    container cannot be found.
+    """
+    if user == "root":
+        path = find_container_path(cfg, name)
+        if path is None:
+            raise prereq.PrereqError(
+                f"Error: Container '{name}' not found in any path."
+            )
+        return path
+
+    path = f"{cfg.unpriv_base}/{user}"
+    if not (Path(path) / name).is_dir():
+        raise prereq.PrereqError(f"Error: Container '{name}' not found in {path}.")
+    return path
+
+
+def resolve_running_container(cfg: Config, name: str, user: str) -> str:
+    """Return the container path, asserting the container is RUNNING."""
+    path = resolve_container_path(cfg, name, user)
+    _, state, _, _, _ = lxc.container_info(path, name)
+    if state != "RUNNING":
+        raise prereq.PrereqError(
+            f"Error: Container '{name}' is {state}. Start it first with:\n"
+            f"  lxc-tools start {name}"
+        )
+    return path
+
+
 def common_parser() -> argparse.ArgumentParser:
     """Argument parser shared by every subcommand (adds ``--dry-run``)."""
     parent = argparse.ArgumentParser(add_help=False)

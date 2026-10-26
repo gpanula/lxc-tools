@@ -163,6 +163,56 @@ def execute(
     return proc.returncode, proc.stdout, proc.stderr
 
 
+def attach(
+    name: str,
+    path: str,
+    command: Optional[list[str]] = None,
+    uid: Optional[int] = None,
+    gid: Optional[int] = None,
+    dry_run: bool = False,
+) -> int:
+    """Attach to a container interactively, or run ``command`` inside it.
+
+    Unlike :func:`execute`, stdio is inherited rather than captured: an
+    interactive shell needs a real terminal, and capturing it would leave the
+    caller with a dead tty. Returns the child's exit status.
+
+    ``uid``/``gid`` map to ``lxc-attach --uid``/``--gid`` so the shell can be
+    opened as a non-root user inside the container.
+    """
+    argv = ["lxc-attach", "-n", name, "-P", path]
+    if uid is not None:
+        argv.extend(["--uid", str(uid)])
+    if gid is not None:
+        argv.extend(["--gid", str(gid)])
+    if command:
+        argv.extend(["--", *command])
+    if dry_run:
+        print(f"[dry-run] would attach to container '{name}': {' '.join(argv)}")
+        return 0
+    return subprocess.run(argv).returncode
+
+
+def console(
+    name: str,
+    path: str,
+    tty: Optional[int] = None,
+    dry_run: bool = False,
+) -> int:
+    """Attach to the container's console via ``lxc-console``.
+
+    Requires ``lxc.tty.max`` to be set in the container config; without it
+    there is no tty for ``lxc-console`` to connect to.
+    """
+    argv = ["lxc-console", "-n", name, "-P", path]
+    if tty is not None:
+        argv.extend(["-t", str(tty)])
+    if dry_run:
+        print(f"[dry-run] would open console for '{name}': {' '.join(argv)}")
+        return 0
+    return subprocess.run(argv).returncode
+
+
 
 # -- inspection (native binding preferred, CLI fallback) -----------------------
 

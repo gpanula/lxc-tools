@@ -13,7 +13,12 @@ from datetime import datetime
 from pathlib import Path
 
 from lxc_tools import lxc as lxc_backend, prereq, zfs
-from lxc_tools.commands import common_parser, find_container_path, guarded, validate
+from lxc_tools.commands import (
+    common_parser,
+    guarded,
+    resolve_running_container,
+    validate,
+)
 from lxc_tools.config import load_config
 from lxc_tools.prereq import require_binaries, require_member_of
 
@@ -85,29 +90,13 @@ def run(args) -> int:
     if not cmd:
         raise prereq.PrereqError("Error: No command specified to execute.")
 
-    # Locate container
-    if user == "root":
-        path = find_container_path(cfg, name)
-        if path is None:
-            raise prereq.PrereqError(f"Error: Container '{name}' not found in any path.")
-        if path == cfg.priv_path:
-            dataset = f"{cfg.zfs_pool}/lxc/privileged/{name}"
-        else:
-            owner = Path(path).name
-            dataset = f"{cfg.zfs_pool}/lxc/unprivileged/{owner}/{name}"
+    # Locate the container and assert it is running.
+    path = resolve_running_container(cfg, name, user)
+    if path == cfg.priv_path:
+        dataset = f"{cfg.zfs_pool}/lxc/privileged/{name}"
     else:
-        path = f"{cfg.unpriv_base}/{user}"
-        if not (Path(path) / name).is_dir():
-            raise prereq.PrereqError(f"Error: Container '{name}' not found in {path}.")
-        dataset = f"{cfg.zfs_pool}/lxc/unprivileged/{user}/{name}"
-
-    # Check container is running
-    _, state, _, _, _ = lxc_backend.container_info(path, name)
-    if state != "RUNNING":
-        raise prereq.PrereqError(
-            f"Error: Container '{name}' is {state}. Start it first with:\n"
-            f"  lxc-tools start {name}"
-        )
+        owner = Path(path).name
+        dataset = f"{cfg.zfs_pool}/lxc/unprivileged/{owner}/{name}"
 
     # Determine snapshot decision
     should_snapshot: bool
