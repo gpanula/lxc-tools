@@ -17,6 +17,22 @@ from lxc_tools.prereq import require_binaries, require_member_of
 
 _BINARIES = ("lxc-ls",)
 
+#: Quick-command hints printed after the listing.
+#:
+#: The label is the subcommand name verbatim, so the hint can be copied and
+#: pasted. Labels are lowercase because ``lxc-tools`` subcommands are
+#: case-sensitive -- a capitalised "Start:" reads like a valid command but
+#: fails with "invalid choice".
+QUICK_COMMANDS = (
+    ("start", "lxc-tools start <name>"),
+    ("stop", "lxc-tools stop <name>"),
+    ("restart", "lxc-tools restart <name>"),
+    ("attach", "lxc-tools attach <name>"),
+    ("console", "lxc-tools console <name>"),
+    ("console-log", "lxc-tools console-log <name>"),
+    ("remove", "lxc-tools remove <name>"),
+)
+
 
 def add_parser(subparsers) -> None:
     parser = subparsers.add_parser(
@@ -80,12 +96,8 @@ def run(args) -> int:
     print(f"Note: Associated host project folders are located in {cfg.project_dir}/")
     print("-------------------------------------------------------")
     print("QUICK COMMANDS:")
-    print("  Start:   lxc-tools start <name>")
-    print("  Stop:    lxc-tools stop <name>")
-    print("  Restart: lxc-tools restart <name>")
-    print("  Connect: sudo lxc-attach -n <name> -P <path>")
-
-    print("  Remove:  lxc-tools remove <name>")
+    for label, command in QUICK_COMMANDS:
+        print(f"  {label + ':':<13} {command}")
     print("-------------------------------------------------------")
     return 0
 
