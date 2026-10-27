@@ -21,10 +21,19 @@ from lxc_tools.prereq import require_binaries, require_member_of
 
 _BINARIES = ("lxc-create", "zfs", "newuidmap", "newgidmap")
 
+#: Default distribution for new containers.
+#:
+#: Void Linux is the default because ``runit`` supervises services: sshd is
+#: restarted automatically if it dies, which is the failure mode that
+#: previously left a container unreachable. It is also glibc-based, so native
+#: npm modules and other prebuilt binaries work as they do on Ubuntu.
+DEFAULT_DISTRO = "voidlinux"
+
 #: Distros that boot with systemd as PID 1. For unprivileged containers these
 #: default to the minimal init (``--no-systemd``) because systemd cannot run
 #: when the host cgroup v2 scope does not delegate the memory/pids controllers.
-#: Alpine uses OpenRC and is intentionally excluded.
+#: Alpine (OpenRC), Void (runit), Gentoo (OpenRC) and Devuan (sysvinit) are
+#: intentionally excluded -- none of them build a cgroup hierarchy.
 SYSTEMD_DISTROS = frozenset({"ubuntu", "debian", "rockylinux", "almalinux"})
 
 #: Path (inside the container rootfs) where the minimal init script is installed
@@ -152,6 +161,14 @@ def _build_provision_script(
             '    apt-get install -y -qq openssh-server >/dev/null 2>&1 || true',
             'elif command -v apk >/dev/null 2>&1; then',
             '    apk add --no-cache openssh >/dev/null 2>&1 || true',
+            'elif command -v xbps-install >/dev/null 2>&1; then',
+            "    # Void: sync the repo index first; xbps-install fails without it.",
+            '    xbps-install -Sy >/dev/null 2>&1 || true',
+            '    xbps-install -y openssh >/dev/null 2>&1 || true',
+            'elif command -v emerge >/dev/null 2>&1; then',
+            "    # Gentoo: the stage3 tarball ships no package database entries.",
+            '    emerge --sync --quiet >/dev/null 2>&1 || true',
+            '    emerge --noreplace net-misc/openssh >/dev/null 2>&1 || true',
             'elif command -v dnf >/dev/null 2>&1; then',
             '    dnf install -y openssh-server >/dev/null 2>&1 || true',
             "fi",
@@ -220,12 +237,30 @@ def _build_provision_script(
     if start_sshd:
         lines += [
             "# --- Start sshd --------------------------------------------------",
+            "# Prefer the native service manager so sshd is *supervised* and",
+            "# restarts if it dies. Falling back to a bare sshd invocation",
+            "# leaves an unsupervised process, which is how a container loses",
+            "# remote access permanently after a crash.",
             'if command -v sshd >/dev/null 2>&1; then',
             "    mkdir -p /run/sshd",
             "    chmod 755 /run/sshd",
             "    ssh-keygen -A >/dev/null 2>&1 || true",
-            "    /usr/sbin/sshd 2>/dev/null || sshd 2>/dev/null || true",
-            '    log "started sshd"',
+            "    if [ -d /var/service ] && command -v sv >/dev/null 2>&1; then",
+            "        # Void/runit: symlink into /var/service and runsvdir supervises it.",
+            "        ln -sfn /etc/sv/sshd /var/service/sshd 2>/dev/null || true",
+            '        log "enabled sshd under runit"',
+            "    elif command -v rc-update >/dev/null 2>&1; then",
+            "        # Gentoo/Alpine/Devuan-OpenRC: add to the default runlevel.",
+            "        rc-update add sshd default >/dev/null 2>&1 || true",
+            "        rc-service sshd start >/dev/null 2>&1 || true",
+            '        log "enabled sshd under OpenRC"',
+            "    elif command -v systemctl >/dev/null 2>&1; then",
+            "        systemctl enable --now sshd >/dev/null 2>&1 || true",
+            '        log "enabled sshd under systemd"',
+            "    else",
+            "        /usr/sbin/sshd 2>/dev/null || sshd 2>/dev/null || true",
+            '        log "started sshd unsupervised (no service manager found)"',
+            "    fi",
             "fi",
             "",
         ]
@@ -278,8 +313,12 @@ def add_parser(subparsers) -> None:
         help="Name of the container to create.",
     )
     parser.add_argument(
-        "distro", nargs="?", default="ubuntu",
-        help="Distribution name (default: ubuntu).",
+        "distro", nargs="?", default=DEFAULT_DISTRO,
+        help=(
+            f"Distribution name (default: {DEFAULT_DISTRO}). Void Linux is the "
+            "default because its runit init supervises services, so sshd is "
+            "restarted automatically if it dies."
+        ),
     )
     parser.add_argument(
         "release", nargs="?", default="lts",
