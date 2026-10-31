@@ -71,6 +71,12 @@ def _run(user: Optional[str], argv: list[str]) -> subprocess.CompletedProcess[st
 
 # -- lifecycle (dispatched via sudo -u to preserve the unprivileged model) -----
 
+#: Distros that are not served by the ``download`` template. They are built by
+#: a dedicated LXC template instead, which takes no ``-d/-r/-a`` arguments.
+#: ``gentoo`` is built from a stage3 tarball by the ``gentoo`` template.
+NON_DOWNLOAD_TEMPLATES = frozenset({"gentoo"})
+
+
 def create(
     name: str,
     path: str,
@@ -80,7 +86,12 @@ def create(
     user: Optional[str] = None,
     dry_run: bool = False,
 ) -> None:
-    """Create an unprivileged container from the download template."""
+    """Create an unprivileged container from the appropriate LXC template.
+
+    Most distros come from the ``download`` template (``-d/-r/-a``). Distros in
+    :data:`NON_DOWNLOAD_TEMPLATES` are built by their own template, which takes
+    no release/arch arguments.
+    """
     description = (
         f"Creating LXC container template '{name}' ({distro}/{release}/{arch}) "
         f"in {path}"
@@ -88,13 +99,14 @@ def create(
     print(description)
     if dry_run:
         return
-    _run(
-        user,
-        [
+    if distro.lower() in NON_DOWNLOAD_TEMPLATES:
+        argv = ["lxc-create", "-n", name, "-P", path, "-t", distro.lower()]
+    else:
+        argv = [
             "lxc-create", "-n", name, "-P", path, "-t", "download", "--",
             "-d", distro, "-r", release, "-a", arch,
-        ],
-    )
+        ]
+    _run(user, argv)
 
 
 def start(

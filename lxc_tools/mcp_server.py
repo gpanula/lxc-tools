@@ -183,13 +183,15 @@ def create_container(
 
     Args:
         name: Container name (alphanumeric, dots, underscores, dashes).
-        distro: Distribution name (default: voidlinux).
+        distro: Distribution name (default: voidlinux). Gentoo is supported via
+            its stage3 template (rolling, OpenRC).
         release: Release codename or 'lts' (default: lts).
         arch: Architecture (default: amd64).
         quota: ZFS disk quota, e.g. '20G' (default: 10G).
         no_systemd: Force the minimal init (brings up eth0 + DNS automatically).
             Defaults to auto: systemd-based distros (ubuntu, debian, rockylinux,
-            almalinux) use the minimal init; alpine uses its own init.
+            almalinux) use the minimal init; alpine, voidlinux and gentoo use
+            their own init.
         systemd: Force systemd as PID 1 (opt out of the default minimal init).
         mac: Static MAC address for eth0 (e.g. '02:16:3e:aa:bb:cc').
         install_sshd: Install openssh-server on first boot.

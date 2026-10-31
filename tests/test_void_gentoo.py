@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from lxc_tools import distro
+from lxc_tools import lxc as lxc_backend
 from lxc_tools.commands import create
 
 
@@ -24,6 +25,56 @@ def test_gentoo_lts_resolves_to_current():
 def test_explicit_release_is_passed_through():
     assert distro.resolve_lts("voidlinux", "current") == "current"
     assert distro.resolve_lts("gentoo", "current") == "current"
+
+
+def test_gentoo_is_a_stage3_distro():
+    assert "gentoo" in distro._STAGE3_DISTROS
+    assert "gentoo" not in distro._ROLLING_CURRENT
+
+
+# -- template selection ------------------------------------------------------
+
+
+def _capture_create(monkeypatch):
+    """Capture the argv passed to the lxc-create subprocess."""
+    calls = []
+
+    def fake_run_as(user, argv, *, check=False):
+        calls.append(list(argv))
+        return type("P", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(lxc_backend, "run_as", fake_run_as)
+    return calls
+
+
+def test_gentoo_uses_gentoo_template(monkeypatch):
+    calls = _capture_create(monkeypatch)
+    lxc_backend.create("my-app", "/tmp/lxc", "gentoo", "current", "amd64")
+    assert len(calls) == 1
+    argv = calls[0]
+    assert argv[:2] == ["lxc-create", "-n"]
+    assert "-t" in argv
+    assert argv[argv.index("-t") + 1] == "gentoo"
+    # The stage3 template takes no download arguments.
+    assert "--" not in argv
+    assert "-d" not in argv
+    assert "-r" not in argv
+    assert "-a" not in argv
+
+
+def test_voidlinux_uses_download_template(monkeypatch):
+    calls = _capture_create(monkeypatch)
+    lxc_backend.create("my-app", "/tmp/lxc", "voidlinux", "current", "amd64")
+    argv = calls[0]
+    assert argv[argv.index("-t") + 1] == "download"
+    assert argv[argv.index("-d") + 1] == "voidlinux"
+    assert argv[argv.index("-r") + 1] == "current"
+    assert argv[argv.index("-a") + 1] == "amd64"
+
+
+def test_gentoo_is_a_non_download_template():
+    assert "gentoo" in lxc_backend.NON_DOWNLOAD_TEMPLATES
+    assert "voidlinux" not in lxc_backend.NON_DOWNLOAD_TEMPLATES
 
 
 # -- default distro ----------------------------------------------------------

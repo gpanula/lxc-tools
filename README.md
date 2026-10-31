@@ -122,9 +122,28 @@ lxc-tools create my-alpine alpine lts 50G
 # Rocky Linux LTS
 lxc-tools create my-rocky rockylinux lts amd64 30G
 
+# Gentoo (rolling, stage3 template)
+lxc-tools create my-gentoo gentoo
+
 # Preview what would happen without executing destructive steps
 lxc-tools --dry-run create my-app
 ```
+
+#### Supported distros
+
+| Distro | Identifier | Release handling | Template |
+|--------|------------|------------------|----------|
+| Void Linux (default) | `voidlinux` | `lts` resolved via download index | `download` |
+| Ubuntu | `ubuntu` | `lts` resolved via `distro-info` | `download` |
+| Debian | `debian` | `lts` resolved via `distro-info` | `download` |
+| Alpine | `alpine` | `lts` resolved via download index | `download` |
+| Rocky Linux | `rockylinux` | `lts` resolved via download index | `download` |
+| AlmaLinux | `almalinux` | `lts` resolved via download index | `download` |
+| Gentoo | `gentoo` | rolling — `lts` resolves to `current` | `gentoo` (stage3) |
+
+Gentoo is not served by the LXC download index. It is created with the
+`gentoo` stage3 template (`lxc-create -t gentoo`), so no `-d`/`-r`/`-a`
+arguments are passed; the release is always the rolling `current` tree.
 
 #### Minimal init (default for systemd distros)
 
@@ -135,7 +154,7 @@ networking or DNS.
 
 To handle this, `lxc-tools create` **defaults to a minimal init** for
 systemd-based distros (`ubuntu`, `debian`, `rockylinux`, `almalinux`). Alpine
-uses OpenRC and keeps its own init.
+and Gentoo use OpenRC and keep their own init.
 
 ```bash
 # Ubuntu: minimal init is applied automatically
@@ -143,6 +162,9 @@ lxc-tools create my-app ubuntu noble amd64 20G
 
 # Alpine: no minimal init (OpenRC)
 lxc-tools create my-alpine alpine lts 50G
+
+# Gentoo: no minimal init (OpenRC)
+lxc-tools create my-gentoo gentoo
 ```
 
 The minimal init script (`/usr/local/sbin/lxc-tools-init.sh` inside the

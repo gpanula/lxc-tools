@@ -317,7 +317,8 @@ def add_parser(subparsers) -> None:
         help=(
             f"Distribution name (default: {DEFAULT_DISTRO}). Void Linux is the "
             "default because its runit init supervises services, so sshd is "
-            "restarted automatically if it dies."
+            "restarted automatically if it dies. Gentoo is supported via its "
+            "stage3 template (rolling, OpenRC)."
         ),
     )
     parser.add_argument(
