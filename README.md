@@ -110,7 +110,7 @@ Every subcommand supports `--help`, and the whole CLI supports a global `--dry-r
 ### Create a Container
 
 ```bash
-# Basic: Ubuntu LTS, amd64, 10G quota
+# Basic: Void Linux (default), amd64, 10G quota
 lxc-tools create my-app
 
 # Debian stable, 20G quota

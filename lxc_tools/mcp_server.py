@@ -162,7 +162,7 @@ mcp = FastMCP(SERVER_NAME)
 @mcp.tool()
 def create_container(
     name: str,
-    distro: str = "ubuntu",
+    distro: str = "voidlinux",
     release: str = "lts",
     arch: str = "amd64",
     quota: Optional[str] = None,
@@ -183,7 +183,7 @@ def create_container(
 
     Args:
         name: Container name (alphanumeric, dots, underscores, dashes).
-        distro: Distribution name (default: ubuntu).
+        distro: Distribution name (default: voidlinux).
         release: Release codename or 'lts' (default: lts).
         arch: Architecture (default: amd64).
         quota: ZFS disk quota, e.g. '20G' (default: 10G).

@@ -15,7 +15,7 @@ def main() -> int:
     # create
     p_create = subparsers.add_parser("create_container")
     p_create.add_argument("name")
-    p_create.add_argument("--distro", default="ubuntu")
+    p_create.add_argument("--distro", default="voidlinux")
     p_create.add_argument("--release", default="lts")
     p_create.add_argument("--arch", default="amd64")
     p_create.add_argument("--quota", default=None)

@@ -83,8 +83,15 @@ def test_create_container_defaults(fake_cli):
     out = create_container("my-app")
     assert out == "ok"
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64"]
     ]
+
+
+def test_create_container_default_distro_is_voidlinux():
+    import inspect
+
+    sig = inspect.signature(create_container)
+    assert sig.parameters["distro"].default == "voidlinux"
 
 
 def test_create_container_full_args(fake_cli):
@@ -105,35 +112,35 @@ def test_create_container_quota_without_arch(fake_cli):
 def test_create_container_dry_run(fake_cli):
     create_container("my-app", dry_run=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--dry-run"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "--dry-run"]
     ]
 
 
 def test_create_container_no_systemd(fake_cli):
     create_container("my-app", no_systemd=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--no-systemd"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "--no-systemd"]
     ]
 
 
 def test_create_container_no_systemd_with_quota(fake_cli):
     create_container("my-app", quota="20G", no_systemd=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "20G", "--no-systemd"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "20G", "--no-systemd"]
     ]
 
 
 def test_create_container_systemd(fake_cli):
     create_container("my-app", systemd=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--systemd"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "--systemd"]
     ]
 
 
 def test_create_container_systemd_overrides_no_systemd(fake_cli):
     create_container("my-app", no_systemd=True, systemd=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--systemd"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "--systemd"]
     ]
 
 
@@ -142,7 +149,7 @@ def test_create_container_auto_default_no_flag(fake_cli):
     # the default from the distro.
     create_container("my-app")
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64"]
     ]
 
 
@@ -159,7 +166,7 @@ def test_create_container_provisioning_flags(fake_cli):
     )
     assert fake_cli == [
         [
-            "/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64",
+            "/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64",
             "--mac", "02:16:3e:aa:bb:cc",
             "--install-sshd",
             "--start-sshd",

@@ -33,6 +33,16 @@ def test_default_distro_is_voidlinux():
     assert create.DEFAULT_DISTRO == "voidlinux"
 
 
+def test_cli_parser_default_distro_is_voidlinux():
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    create.add_parser(subparsers)
+    args = parser.parse_args(["create", "my-app"])
+    assert args.distro == "voidlinux"
+
+
 def test_voidlinux_is_not_a_systemd_distro():
     assert "voidlinux" not in create.SYSTEMD_DISTROS
 
