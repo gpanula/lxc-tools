@@ -20,6 +20,7 @@
 ## 3. Safety & Verification Standards
 * **Linux SysAdmin**: Always prefer dry-runs / check-mode / non-destructive inspection before applying changes.
 * **Rollbacks & State**: Preserve file states and track changes cleanly.
+* **Tests Must Pass**: [`.githooks/pre-commit`](./.githooks/pre-commit) runs the full suite and blocks the commit on failure. The suite is pure-logic (no root, no ZFS/LXC/ACL bindings) and runs in under a second. Run it directly with `.venv/bin/python -m pytest tests/ -q`; system `python3` has no pytest. For a WIP commit, bypass with `SKIP_TESTS=1 git commit ...`. CI ([`.github/workflows/tests.yml`](./.github/workflows/tests.yml)) runs the same suite on Python 3.10 and 3.12 and cannot be bypassed.
 * **Defensive Scripting & Error Traps**: All shell scripts in this repository must implement strict defensive error handling:
   * Strict error headers: `set -euo pipefail`
   * Error trap diagnostics: `trap 'echo "❌ [ERROR] Script failed on line ${LINENO} executing: ${BASH_COMMAND}" >&2; exit 1' ERR`

@@ -1,0 +1,50 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Test suite (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the floor declared in pyproject.toml; 3.12 catches
+        # forward-compat breakage early.
+        python-version: ['3.10', '3.12']
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install package and test dependencies
+        # The suite is pure-logic: no native ZFS/LXC/ACL bindings needed,
+        # so the `test` extra alone is sufficient.
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[test]"
+
+      - name: Run tests
+        run: python -m pytest tests/ -q -p no:cacheprovider
+
+      - name: Verify the suite actually collected tests
+        # A green run that collected nothing is a silent failure. Guard
+        # against a broken testpaths setting or an import error that
+        # pytest reports as "no tests ran" with exit code 5.
+        run: |
+          count=$(python -m pytest tests/ --collect-only -q -p no:cacheprovider 2>/dev/null | grep -c '::' || true)
+          echo "collected: $count"
+          if [ "$count" -lt 100 ]; then
+            echo "❌ Expected at least 100 tests, collected $count." >&2
+            exit 1
+          fi
