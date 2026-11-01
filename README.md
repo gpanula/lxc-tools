@@ -153,8 +153,9 @@ controllers — systemd exits immediately as PID 1, leaving the container with n
 networking or DNS.
 
 To handle this, `lxc-tools create` **defaults to a minimal init** for
-systemd-based distros (`ubuntu`, `debian`, `rockylinux`, `almalinux`). Alpine
-and Gentoo use OpenRC and keep their own init.
+systemd-based distros (`ubuntu`, `debian`, `rockylinux`, `almalinux`). Distros
+with their own init system — Alpine (OpenRC), Void (runit), Gentoo (OpenRC) and
+Devuan (sysvinit) — keep their native init.
 
 ```bash
 # Ubuntu: minimal init is applied automatically
@@ -179,9 +180,6 @@ container) does the following at boot:
 #### Overriding the default
 
 ```bash
-# Force the minimal init even on a non-systemd distro (e.g. alpine)
-lxc-tools create my-alpine alpine lts 50G --no-systemd
-
 # Force systemd (opt out of the default minimal init)
 lxc-tools create my-app ubuntu noble amd64 20G --systemd
 ```
@@ -189,6 +187,20 @@ lxc-tools create my-app ubuntu noble amd64 20G --systemd
 Use `--systemd` only when the host delegates the `memory`/`pids` controllers to
 the container (e.g. a privileged container or a host with full cgroup v2
 delegation).
+
+`--no-systemd` only affects systemd distros (`ubuntu`, `debian`, `rockylinux`,
+`almalinux`), where it forces the minimal init. On Void (runit), Gentoo
+(OpenRC), Alpine (OpenRC) and Devuan (sysvinit) it is **ignored** and the native
+init is kept; a warning is printed to stderr:
+
+```text
+WARNING: --no-systemd ignored for 'alpine': it uses its own init system (openrc); keeping native init.
+```
+
+The minimal init is not applied to these distros because it requires `dhcpcd`
+(absent from the Void base image and the Gentoo stage3), and replacing the
+native init would disable service supervision — `sshd` would not be started or
+restarted.
 
 #### Static MAC address
 

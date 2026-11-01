@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -518,18 +519,38 @@ def _has_provisioning(args) -> bool:
     )
 
 
+#: Native init system for non-systemd distros, used in the ``--no-systemd``
+#: no-op warning. Unknown distros fall back to a generic description.
+_NATIVE_INIT = {
+    "alpine": "openrc",
+    "voidlinux": "runit",
+    "gentoo": "openrc",
+    "devuan": "sysvinit",
+}
+
+
 def _resolve_no_systemd(args, distro_name: str) -> bool:
     """Resolve whether to use the minimal init for a container.
 
     Precedence:
     1. ``--systemd`` forces systemd (returns False).
-    2. ``--no-systemd`` forces the minimal init (returns True).
+    2. ``--no-systemd`` forces the minimal init (returns True) for systemd
+       distros. For non-systemd distros it is a no-op: the distro's native
+       init is kept and a warning is emitted on stderr.
     3. Otherwise, systemd-based distros default to the minimal init.
     """
     if getattr(args, "systemd", False):
         return False
     if getattr(args, "no_systemd", False):
-        return True
+        if distro_name.lower() in SYSTEMD_DISTROS:
+            return True
+        native = _NATIVE_INIT.get(distro_name.lower(), "its own init system")
+        print(
+            f"WARNING: --no-systemd ignored for '{distro_name}': it uses its "
+            f"own init system ({native}); keeping native init.",
+            file=sys.stderr,
+        )
+        return False
     return distro_name.lower() in SYSTEMD_DISTROS
 
 

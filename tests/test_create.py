@@ -172,13 +172,61 @@ def test_resolve_no_systemd_explicit_systemd():
 
 
 def test_resolve_no_systemd_explicit_no_systemd():
-    # --no-systemd forces minimal init even for alpine.
-    assert _resolve_no_systemd(_Args(no_systemd=True), "alpine") is True
+    # --no-systemd forces minimal init for a systemd distro.
+    assert _resolve_no_systemd(_Args(no_systemd=True), "ubuntu") is True
 
 
 def test_resolve_no_systemd_systemd_wins_over_no_systemd():
     # --systemd takes precedence over --no-systemd.
     assert _resolve_no_systemd(_Args(no_systemd=True, systemd=True), "ubuntu") is False
+
+
+@pytest.mark.parametrize(
+    ("distro_name", "native_init"),
+    [
+        ("voidlinux", "runit"),
+        ("gentoo", "openrc"),
+        ("alpine", "openrc"),
+    ],
+)
+def test_resolve_no_systemd_noop_on_non_systemd_distro(
+    capsys, distro_name, native_init
+):
+    # --no-systemd is a no-op for non-systemd distros: native init is kept
+    # and a warning is emitted on stderr.
+    assert _resolve_no_systemd(_Args(no_systemd=True), distro_name) is False
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert (
+        f"WARNING: --no-systemd ignored for '{distro_name}': it uses its own "
+        f"init system ({native_init}); keeping native init." in captured.err
+    )
+
+
+def test_resolve_no_systemd_ubuntu_no_warning(capsys):
+    # Regression guard: --no-systemd on a systemd distro still returns True
+    # and emits no warning.
+    assert _resolve_no_systemd(_Args(no_systemd=True), "ubuntu") is True
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_resolve_no_systemd_explicit_systemd_voidlinux_no_warning(capsys):
+    # --systemd on a non-systemd distro is unchanged: returns False, no warning.
+    assert _resolve_no_systemd(_Args(systemd=True), "voidlinux") is False
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+@pytest.mark.parametrize("distro_name", ["voidlinux", "gentoo"])
+def test_resolve_no_systemd_default_non_systemd_no_warning(capsys, distro_name):
+    # Default (no flags) on non-systemd distros returns False with no warning.
+    assert _resolve_no_systemd(_Args(), distro_name) is False
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 class _Cfg:
