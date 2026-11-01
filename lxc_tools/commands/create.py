@@ -505,7 +505,7 @@ def run(args) -> int:
         _configure_init(name, lxc_path, mapped_uid, args.dry_run)
     if _has_provisioning(args):
         _configure_provisioning(name, lxc_path, mapped_uid, args, args.dry_run)
-    _print_summary(name, user, cfg.project_dir, lxc_path)
+    _print_summary(name, user, cfg.project_dir)
     return 0
 
 
@@ -837,7 +837,7 @@ def _configure_provisioning(name, lxc_path, mapped_uid, args, dry_run) -> None:
     prereq.dry_or(dry_run, "  Installing first-boot provisioning script", install)
 
 
-def _print_summary(name, user, project_dir, lxc_path) -> None:
+def _print_summary(name, user, project_dir) -> None:
     print("[7/7] Setup complete!")
     print("-------------------------------------------------------")
     print(f"Container '{name}' is ready.")

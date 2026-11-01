@@ -31,7 +31,7 @@ def main() -> int:
         help="Architecture (default: amd64).",
     )
     p_create.add_argument("--quota", default=None)
-    p_create.add_argument("--no-systemd", action="store_true", default=None)
+    p_create.add_argument("--no-systemd", action="store_true")
     p_create.add_argument("--systemd", action="store_true")
     p_create.add_argument("--mac", default=None)
     p_create.add_argument("--install-sshd", action="store_true")
