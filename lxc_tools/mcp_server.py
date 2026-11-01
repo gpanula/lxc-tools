@@ -409,7 +409,6 @@ def list_templates(distro: Optional[str] = None) -> str:
 
 @mcp.tool()
 def snapshot_container(
-
     name: str, tag: Optional[str] = None, dry_run: bool = False
 ) -> str:
     """Create a ZFS snapshot of an LXC container's rootfs.

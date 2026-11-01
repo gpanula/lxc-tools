@@ -132,8 +132,9 @@ def _build_provision_script(
 ) -> str:
     """Build the first-boot provisioning shell script.
 
-    The script runs inside the container on first boot (invoked by the minimal
-    init, or a one-shot systemd unit). It is idempotent via a marker file.
+    The script runs inside the container on first boot, invoked by the minimal
+    init script (it is not wired into systemd). It is idempotent via a marker
+    file.
     """
     lines = [
         "#!/bin/sh",
@@ -295,7 +296,7 @@ def validate_arch_not_quota(arch: str) -> None:
         raise prereq.PrereqError(
             "Error: '<arch>' looks like a quota size, not an architecture.\n"
             "Usage: lxc-tools create <container_name> [distro] [release] [arch] [quota]\n"
-            "Example: lxc-tools create my-app ubuntu lts amd64 64G"
+            "Example: lxc-tools create my-app voidlinux lts amd64 64G"
         )
 
 
@@ -805,8 +806,8 @@ def _configure_mac(name, lxc_path, mac, dry_run) -> None:
 def _configure_provisioning(name, lxc_path, mapped_uid, args, dry_run) -> None:
     """Write the first-boot provisioning script into the rootfs.
 
-    The script is invoked by the minimal init on first boot (or a one-shot
-    systemd unit for systemd containers) and performs user/ssh/sudo setup.
+    The script is invoked by the minimal init on first boot (it is not wired
+    into systemd) and performs user/ssh/sudo setup.
     """
     rootfs_path = Path(lxc_path) / name / "rootfs"
     provision_target = rootfs_path / _PROVISION_SCRIPT_PATH.lstrip("/")

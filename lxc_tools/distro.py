@@ -7,7 +7,7 @@ advertised by the LXC download template.
 
 ``voidlinux`` is a rolling release with a single ``current`` image, so ``lts``
 resolves to that literal. ``gentoo`` is not in the download index at all -- it
-is built from a stage3 tarball by the ``lxc-gentoo`` template, which takes no
+is built from a stage3 tarball by the ``gentoo`` template, which takes no
 release argument.
 """
 
@@ -26,7 +26,9 @@ _ROLLING_CURRENT = frozenset({"voidlinux"})
 
 #: Distros built from a stage3 tarball rather than the download index. The
 #: template ignores the release argument, so ``lts`` resolves to ``current``.
-_STAGE3_DISTROS = frozenset({"gentoo"})
+#: Derived from :data:`lxc_tools.lxc.NON_DOWNLOAD_TEMPLATES` (this module already
+#: imports the backend) so the two sets cannot drift.
+_STAGE3_DISTROS = lxc_backend.NON_DOWNLOAD_TEMPLATES
 
 
 def _run_cli(cli: str, args: list[str]) -> subprocess.CompletedProcess[str]:

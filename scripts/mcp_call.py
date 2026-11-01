@@ -15,10 +15,33 @@ def main() -> int:
     # create
     p_create = subparsers.add_parser("create_container")
     p_create.add_argument("name")
-    p_create.add_argument("--distro", default="voidlinux")
-    p_create.add_argument("--release", default="lts")
-    p_create.add_argument("--arch", default="amd64")
+    p_create.add_argument(
+        "--distro",
+        default="voidlinux",
+        help="Distribution name (default: voidlinux). Gentoo uses the stage3 template.",
+    )
+    p_create.add_argument(
+        "--release",
+        default="lts",
+        help="Release codename or 'lts' (default: lts).",
+    )
+    p_create.add_argument(
+        "--arch",
+        default="amd64",
+        help="Architecture (default: amd64).",
+    )
     p_create.add_argument("--quota", default=None)
+    p_create.add_argument("--no-systemd", action="store_true", default=None)
+    p_create.add_argument("--systemd", action="store_true")
+    p_create.add_argument("--mac", default=None)
+    p_create.add_argument("--install-sshd", action="store_true")
+    p_create.add_argument("--start-sshd", action="store_true")
+    p_create.add_argument("--ssh-key", default=None)
+    p_create.add_argument("--user", default=None)
+    p_create.add_argument("--sudo", action="store_true")
+    p_create.add_argument("--nopasswd-sudo", action="store_true")
+    p_create.add_argument("--allow-tcp-forwarding", action="store_true")
+    p_create.add_argument("--background", action="store_true")
     p_create.add_argument("--dry-run", action="store_true")
 
     # start
@@ -73,6 +96,10 @@ def main() -> int:
     p_snaps = subparsers.add_parser("list_snapshots")
     p_snaps.add_argument("name")
 
+    # templates
+    p_tpl = subparsers.add_parser("list_templates")
+    p_tpl.add_argument("--distro", default=None)
+
     # exec
     p_exec = subparsers.add_parser("exec_container")
     p_exec.add_argument("name")
@@ -90,6 +117,17 @@ def main() -> int:
             release=args.release,
             arch=args.arch,
             quota=args.quota,
+            no_systemd=args.no_systemd,
+            systemd=args.systemd,
+            mac=args.mac,
+            install_sshd=args.install_sshd,
+            start_sshd=args.start_sshd,
+            ssh_key=args.ssh_key,
+            user=args.user,
+            sudo=args.sudo,
+            nopasswd_sudo=args.nopasswd_sudo,
+            allow_tcp_forwarding=args.allow_tcp_forwarding,
+            background=args.background,
             dry_run=args.dry_run,
         )
     elif args.tool == "start_container":
@@ -128,9 +166,6 @@ def main() -> int:
             no_snapshot=args.no_snapshot,
             dry_run=args.dry_run,
         )
-
-
-
     else:
         print(f"Unknown tool: {args.tool}", file=sys.stderr)
         return 1
