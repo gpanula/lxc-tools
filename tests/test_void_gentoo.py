@@ -14,10 +14,6 @@ def test_voidlinux_lts_resolves_to_current():
     assert distro.resolve_lts("voidlinux", "lts") == "current"
 
 
-def test_archlinux_lts_resolves_to_current():
-    assert distro.resolve_lts("archlinux", "lts") == "current"
-
-
 def test_gentoo_lts_resolves_to_current():
     assert distro.resolve_lts("gentoo", "lts") == "current"
 
@@ -77,6 +73,46 @@ def test_gentoo_is_a_non_download_template():
     assert "voidlinux" not in lxc_backend.NON_DOWNLOAD_TEMPLATES
 
 
+# -- ignored --release warning -----------------------------------------------
+
+
+def test_gentoo_explicit_release_warns_and_omits_r(monkeypatch, capsys):
+    calls = _capture_create(monkeypatch)
+    lxc_backend.create("my-app", "/tmp/lxc", "gentoo", "bookworm", "amd64")
+    err = capsys.readouterr().err
+    assert "WARNING: --release 'bookworm' ignored for 'gentoo'" in err
+    argv = calls[0]
+    assert argv[argv.index("-t") + 1] == "gentoo"
+    assert "-r" not in argv
+
+
+def test_gentoo_lts_release_does_not_warn(monkeypatch, capsys):
+    _capture_create(monkeypatch)
+    lxc_backend.create("my-app", "/tmp/lxc", "gentoo", "lts", "amd64")
+    assert capsys.readouterr().err == ""
+
+
+def test_gentoo_current_release_does_not_warn(monkeypatch, capsys):
+    _capture_create(monkeypatch)
+    lxc_backend.create("my-app", "/tmp/lxc", "gentoo", "current", "amd64")
+    assert capsys.readouterr().err == ""
+
+
+def test_ubuntu_explicit_release_does_not_warn_and_passes_r(monkeypatch, capsys):
+    calls = _capture_create(monkeypatch)
+    lxc_backend.create("my-app", "/tmp/lxc", "ubuntu", "noble", "amd64")
+    assert capsys.readouterr().err == ""
+    argv = calls[0]
+    assert argv[argv.index("-r") + 1] == "noble"
+
+
+def test_gentoo_log_line_reports_current(monkeypatch, capsys):
+    _capture_create(monkeypatch)
+    lxc_backend.create("my-app", "/tmp/lxc", "gentoo", "bookworm", "amd64")
+    out = capsys.readouterr().out
+    assert "(gentoo/current/amd64)" in out
+
+
 # -- default distro ----------------------------------------------------------
 
 
@@ -96,6 +132,10 @@ def test_cli_parser_default_distro_is_voidlinux():
 
 def test_voidlinux_is_not_a_systemd_distro():
     assert "voidlinux" not in create.SYSTEMD_DISTROS
+
+
+def test_devuan_is_not_a_native_init_entry():
+    assert "devuan" not in create._NATIVE_INIT
 
 
 def test_gentoo_is_not_a_systemd_distro():

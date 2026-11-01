@@ -25,6 +25,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 from typing import Optional
 
 INSTALL_HINT = (
@@ -92,14 +93,25 @@ def create(
     :data:`NON_DOWNLOAD_TEMPLATES` are built by their own template, which takes
     no release/arch arguments.
     """
+    is_non_download = distro.lower() in NON_DOWNLOAD_TEMPLATES
+    # Non-download templates ignore the release argument and always build the
+    # rolling ``current`` tree, so report that rather than implying the
+    # requested release was honored.
+    effective_release = "current" if is_non_download else release
     description = (
-        f"Creating LXC container template '{name}' ({distro}/{release}/{arch}) "
-        f"in {path}"
+        f"Creating LXC container template '{name}' "
+        f"({distro}/{effective_release}/{arch}) in {path}"
     )
     print(description)
+    if is_non_download and release.lower() not in ("lts", "current"):
+        print(
+            f"WARNING: --release '{release}' ignored for '{distro}': "
+            f"it uses the rolling 'current' tree.",
+            file=sys.stderr,
+        )
     if dry_run:
         return
-    if distro.lower() in NON_DOWNLOAD_TEMPLATES:
+    if is_non_download:
         argv = ["lxc-create", "-n", name, "-P", path, "-t", distro.lower()]
     else:
         argv = [

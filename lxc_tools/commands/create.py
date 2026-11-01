@@ -33,8 +33,8 @@ DEFAULT_DISTRO = "voidlinux"
 #: Distros that boot with systemd as PID 1. For unprivileged containers these
 #: default to the minimal init (``--no-systemd``) because systemd cannot run
 #: when the host cgroup v2 scope does not delegate the memory/pids controllers.
-#: Alpine (OpenRC), Void (runit), Gentoo (OpenRC) and Devuan (sysvinit) are
-#: intentionally excluded -- none of them build a cgroup hierarchy.
+#: Alpine (OpenRC), Void (runit) and Gentoo (OpenRC) are intentionally
+#: excluded -- none of them build a cgroup hierarchy.
 SYSTEMD_DISTROS = frozenset({"ubuntu", "debian", "rockylinux", "almalinux"})
 
 #: Path (inside the container rootfs) where the minimal init script is installed
@@ -251,7 +251,7 @@ def _build_provision_script(
             "        ln -sfn /etc/sv/sshd /var/service/sshd 2>/dev/null || true",
             '        log "enabled sshd under runit"',
             "    elif command -v rc-update >/dev/null 2>&1; then",
-            "        # Gentoo/Alpine/Devuan-OpenRC: add to the default runlevel.",
+            "        # Gentoo/Alpine OpenRC: add to the default runlevel.",
             "        rc-update add sshd default >/dev/null 2>&1 || true",
             "        rc-service sshd start >/dev/null 2>&1 || true",
             '        log "enabled sshd under OpenRC"',
@@ -525,7 +525,6 @@ _NATIVE_INIT = {
     "alpine": "openrc",
     "voidlinux": "runit",
     "gentoo": "openrc",
-    "devuan": "sysvinit",
 }
 
 

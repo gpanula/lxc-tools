@@ -4,8 +4,8 @@ This runbook is written for an AI agent operating on a Debian/Ubuntu host. It
 describes how to install, configure, and verify **lxc-tools**, a Python CLI that
 manages unprivileged LXC containers with ZFS backing and secure bind mounts.
 
-The tool is a single executable, [`lxc-tools`](pyproject.toml), exposing six
-subcommands:
+The tool is a single executable, [`lxc-tools`](pyproject.toml), exposing
+thirteen subcommands:
 
 ```
 lxc-tools create <name> [distro] [release] [arch] [quota]
@@ -14,6 +14,13 @@ lxc-tools stop   <name> [--kill]
 lxc-tools list   [--active|--stopped]
 lxc-tools remove <name> [--force]
 lxc-tools restart <name>
+lxc-tools snapshot <name> [tag]
+lxc-tools rollback <name> <tag>
+lxc-tools snapshots <name>
+lxc-tools exec <name> [--snapshot-tag <tag>|--no-snapshot] -- <command>
+lxc-tools attach <name>
+lxc-tools console <name>
+lxc-tools console-log <name> [--lines <n>]
 ```
 
 A global `--dry-run` flag is supported before or after the subcommand and prints
@@ -435,8 +442,10 @@ fastmcp run lxc_tools.mcp_server
 ### Tools
 
 `create_container`, `start_container`, `stop_container`, `restart_container`,
-`list_containers`, `remove_container`, `container_info` (read-only) and
-`config_dump` (read-only). Every mutating tool accepts `dry_run` to preview
+`list_containers`, `remove_container`, `container_info` (read-only),
+`config_dump` (read-only), `list_templates` (read-only), `snapshot_container`,
+`rollback_container`, `list_snapshots` (read-only), `exec_container` and
+`console_log` (read-only). Every mutating tool accepts `dry_run` to preview
 actions without executing destructive steps.
 
 ### Client configuration

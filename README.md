@@ -154,8 +154,8 @@ networking or DNS.
 
 To handle this, `lxc-tools create` **defaults to a minimal init** for
 systemd-based distros (`ubuntu`, `debian`, `rockylinux`, `almalinux`). Distros
-with their own init system — Alpine (OpenRC), Void (runit), Gentoo (OpenRC) and
-Devuan (sysvinit) — keep their native init.
+with their own init system — Alpine (OpenRC), Void (runit) and Gentoo
+(OpenRC) — keep their native init.
 
 ```bash
 # Ubuntu: minimal init is applied automatically
@@ -190,8 +190,8 @@ delegation).
 
 `--no-systemd` only affects systemd distros (`ubuntu`, `debian`, `rockylinux`,
 `almalinux`), where it forces the minimal init. On Void (runit), Gentoo
-(OpenRC), Alpine (OpenRC) and Devuan (sysvinit) it is **ignored** and the native
-init is kept; a warning is printed to stderr:
+(OpenRC) and Alpine (OpenRC) it is **ignored** and the native init is kept; a
+warning is printed to stderr:
 
 ```text
 WARNING: --no-systemd ignored for 'alpine': it uses its own init system (openrc); keeping native init.

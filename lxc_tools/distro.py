@@ -5,10 +5,10 @@ back to the ``ubuntu-distro-info`` / ``debian-distro-info`` CLIs. ``alpine``,
 ``rockylinux`` and ``almalinux`` resolve to the highest numerical release
 advertised by the LXC download template.
 
-``voidlinux`` and ``archlinux`` are rolling releases with a single ``current``
-image, so ``lts`` resolves to that literal. ``gentoo`` is not in the download
-index at all -- it is built from a stage3 tarball by the ``lxc-gentoo``
-template, which takes no release argument.
+``voidlinux`` is a rolling release with a single ``current`` image, so ``lts``
+resolves to that literal. ``gentoo`` is not in the download index at all -- it
+is built from a stage3 tarball by the ``lxc-gentoo`` template, which takes no
+release argument.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ _UBUNTU_FALLBACK = "jammy"
 _DEBIAN_FALLBACK = "bookworm"
 
 #: Rolling-release distros that publish exactly one image, named ``current``.
-_ROLLING_CURRENT = frozenset({"voidlinux", "archlinux"})
+_ROLLING_CURRENT = frozenset({"voidlinux"})
 
 #: Distros built from a stage3 tarball rather than the download index. The
 #: template ignores the release argument, so ``lts`` resolves to ``current``.

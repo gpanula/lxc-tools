@@ -68,6 +68,31 @@ def test_run_cli_ok(fake_cli):
     assert fake_cli == [["/usr/local/bin/lxc-tools", "list"]]
 
 
+def test_summary_success_includes_stdout_and_stderr():
+    result = mcp_server.CommandResult(0, "created\n", "WARNING: ignored\n")
+    summary = result.summary()
+    assert "created" in summary
+    assert "WARNING: ignored" in summary
+    assert summary == "created\n\nWARNING: ignored"
+
+
+def test_summary_success_stdout_only_unchanged():
+    result = mcp_server.CommandResult(0, "ok\n", "")
+    assert result.summary() == "ok"
+
+
+def test_summary_success_stderr_only():
+    result = mcp_server.CommandResult(0, "", "WARNING: ignored\n")
+    assert result.summary() == "WARNING: ignored"
+
+
+def test_summary_failure_surfaces_stderr():
+    result = mcp_server.CommandResult(1, "", "boom\n")
+    summary = result.summary()
+    assert "Error (exit 1)" in summary
+    assert "boom" in summary
+
+
 def test_run_cli_error_renders_exit_code(fake_cli):
     fake_cli.clear()
     mcp_server.subprocess.run = lambda argv, **kw: FakeProc(

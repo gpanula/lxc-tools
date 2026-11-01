@@ -66,10 +66,15 @@ class CommandResult:
 
     def summary(self) -> str:
         """Return a compact, agent-friendly rendering of the result."""
-        if self.ok:
-            return self.stdout.strip() or self.stderr.strip() or "(no output)"
         out = self.stdout.strip()
         err = self.stderr.strip()
+        if self.ok:
+            # Warnings (e.g. an ignored --release) are written to stderr even
+            # on success, so surface them alongside stdout instead of dropping
+            # them whenever stdout is non-empty.
+            if out and err:
+                return f"{out}\n\n{err}"
+            return out or err or "(no output)"
         body = f"{out}\n{err}".strip() if out and err else (out or err or "(no output)")
         return f"Error (exit {self.returncode}):\n{body}"
 
