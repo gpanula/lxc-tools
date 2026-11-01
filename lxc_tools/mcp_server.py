@@ -66,10 +66,15 @@ class CommandResult:
 
     def summary(self) -> str:
         """Return a compact, agent-friendly rendering of the result."""
-        if self.ok:
-            return self.stdout.strip() or self.stderr.strip() or "(no output)"
         out = self.stdout.strip()
         err = self.stderr.strip()
+        if self.ok:
+            # Warnings (e.g. an ignored --release) are written to stderr even
+            # on success, so surface them alongside stdout instead of dropping
+            # them whenever stdout is non-empty.
+            if out and err:
+                return f"{out}\n\n{err}"
+            return out or err or "(no output)"
         body = f"{out}\n{err}".strip() if out and err else (out or err or "(no output)")
         return f"Error (exit {self.returncode}):\n{body}"
 
@@ -162,7 +167,7 @@ mcp = FastMCP(SERVER_NAME)
 @mcp.tool()
 def create_container(
     name: str,
-    distro: str = "ubuntu",
+    distro: str = "voidlinux",
     release: str = "lts",
     arch: str = "amd64",
     quota: Optional[str] = None,
@@ -183,13 +188,15 @@ def create_container(
 
     Args:
         name: Container name (alphanumeric, dots, underscores, dashes).
-        distro: Distribution name (default: ubuntu).
+        distro: Distribution name (default: voidlinux). Gentoo is supported via
+            its stage3 template (rolling, OpenRC).
         release: Release codename or 'lts' (default: lts).
         arch: Architecture (default: amd64).
         quota: ZFS disk quota, e.g. '20G' (default: 10G).
         no_systemd: Force the minimal init (brings up eth0 + DNS automatically).
             Defaults to auto: systemd-based distros (ubuntu, debian, rockylinux,
-            almalinux) use the minimal init; alpine uses its own init.
+            almalinux) use the minimal init; alpine, voidlinux and gentoo use
+            their own init.
         systemd: Force systemd as PID 1 (opt out of the default minimal init).
         mac: Static MAC address for eth0 (e.g. '02:16:3e:aa:bb:cc').
         install_sshd: Install openssh-server on first boot.
@@ -402,7 +409,6 @@ def list_templates(distro: Optional[str] = None) -> str:
 
 @mcp.tool()
 def snapshot_container(
-
     name: str, tag: Optional[str] = None, dry_run: bool = False
 ) -> str:
     """Create a ZFS snapshot of an LXC container's rootfs.
@@ -490,6 +496,22 @@ def exec_container(
     argv.append("--")
     argv.extend(shlex.split(command))
     return _run_cli(*argv).summary()
+
+
+@mcp.tool()
+def console_log(name: str, lines: int = 100) -> str:
+    """Read a container's captured console/init output.
+
+    The console log captures PID 1 stdout/stderr, so it is the primary way to
+    diagnose a container whose init (or sshd) failed to start. Note that
+    ``attach`` and ``console`` are interactive and therefore not exposed as
+    MCP tools.
+
+    Args:
+        name: Container name.
+        lines: Number of trailing lines to return (default: 100).
+    """
+    return _run_cli("console-log", name, "--lines", str(lines)).summary()
 
 
 def main() -> None:

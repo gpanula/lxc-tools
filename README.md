@@ -110,7 +110,7 @@ Every subcommand supports `--help`, and the whole CLI supports a global `--dry-r
 ### Create a Container
 
 ```bash
-# Basic: Ubuntu LTS, amd64, 10G quota
+# Basic: Void Linux (default), amd64, 10G quota
 lxc-tools create my-app
 
 # Debian stable, 20G quota
@@ -122,9 +122,28 @@ lxc-tools create my-alpine alpine lts 50G
 # Rocky Linux LTS
 lxc-tools create my-rocky rockylinux lts amd64 30G
 
+# Gentoo (rolling, stage3 template)
+lxc-tools create my-gentoo gentoo
+
 # Preview what would happen without executing destructive steps
 lxc-tools --dry-run create my-app
 ```
+
+#### Supported distros
+
+| Distro | Identifier | Release handling | Template |
+|--------|------------|------------------|----------|
+| Void Linux (default) | `voidlinux` | `lts` resolved via download index | `download` |
+| Ubuntu | `ubuntu` | `lts` resolved via `distro-info` | `download` |
+| Debian | `debian` | `lts` resolved via `distro-info` | `download` |
+| Alpine | `alpine` | `lts` resolved via download index | `download` |
+| Rocky Linux | `rockylinux` | `lts` resolved via download index | `download` |
+| AlmaLinux | `almalinux` | `lts` resolved via download index | `download` |
+| Gentoo | `gentoo` | rolling — `lts` resolves to `current` | `gentoo` (stage3) |
+
+Gentoo is not served by the LXC download index. It is created with the
+`gentoo` stage3 template (`lxc-create -t gentoo`), so no `-d`/`-r`/`-a`
+arguments are passed; the release is always the rolling `current` tree.
 
 #### Minimal init (default for systemd distros)
 
@@ -134,8 +153,9 @@ controllers — systemd exits immediately as PID 1, leaving the container with n
 networking or DNS.
 
 To handle this, `lxc-tools create` **defaults to a minimal init** for
-systemd-based distros (`ubuntu`, `debian`, `rockylinux`, `almalinux`). Alpine
-uses OpenRC and keeps its own init.
+systemd-based distros (`ubuntu`, `debian`, `rockylinux`, `almalinux`). Distros
+with their own init system — Alpine (OpenRC), Void (runit) and Gentoo
+(OpenRC) — keep their native init.
 
 ```bash
 # Ubuntu: minimal init is applied automatically
@@ -143,6 +163,9 @@ lxc-tools create my-app ubuntu noble amd64 20G
 
 # Alpine: no minimal init (OpenRC)
 lxc-tools create my-alpine alpine lts 50G
+
+# Gentoo: no minimal init (OpenRC)
+lxc-tools create my-gentoo gentoo
 ```
 
 The minimal init script (`/usr/local/sbin/lxc-tools-init.sh` inside the
@@ -157,9 +180,6 @@ container) does the following at boot:
 #### Overriding the default
 
 ```bash
-# Force the minimal init even on a non-systemd distro (e.g. alpine)
-lxc-tools create my-alpine alpine lts 50G --no-systemd
-
 # Force systemd (opt out of the default minimal init)
 lxc-tools create my-app ubuntu noble amd64 20G --systemd
 ```
@@ -167,6 +187,20 @@ lxc-tools create my-app ubuntu noble amd64 20G --systemd
 Use `--systemd` only when the host delegates the `memory`/`pids` controllers to
 the container (e.g. a privileged container or a host with full cgroup v2
 delegation).
+
+`--no-systemd` only affects systemd distros (`ubuntu`, `debian`, `rockylinux`,
+`almalinux`), where it forces the minimal init. On Void (runit), Gentoo
+(OpenRC) and Alpine (OpenRC) it is **ignored** and the native init is kept; a
+warning is printed to stderr:
+
+```text
+WARNING: --no-systemd ignored for 'alpine': it uses its own init system (openrc); keeping native init.
+```
+
+The minimal init is not applied to these distros because it requires `dhcpcd`
+(absent from the Void base image and the Gentoo stage3), and replacing the
+native init would disable service supervision — `sshd` would not be started or
+restarted.
 
 #### Static MAC address
 

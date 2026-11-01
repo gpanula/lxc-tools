@@ -25,6 +25,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 from typing import Optional
 
 INSTALL_HINT = (
@@ -71,6 +72,12 @@ def _run(user: Optional[str], argv: list[str]) -> subprocess.CompletedProcess[st
 
 # -- lifecycle (dispatched via sudo -u to preserve the unprivileged model) -----
 
+#: Distros that are not served by the ``download`` template. They are built by
+#: a dedicated LXC template instead, which takes no ``-d/-r/-a`` arguments.
+#: ``gentoo`` is built from a stage3 tarball by the ``gentoo`` template.
+NON_DOWNLOAD_TEMPLATES = frozenset({"gentoo"})
+
+
 def create(
     name: str,
     path: str,
@@ -80,21 +87,38 @@ def create(
     user: Optional[str] = None,
     dry_run: bool = False,
 ) -> None:
-    """Create an unprivileged container from the download template."""
+    """Create an unprivileged container from the appropriate LXC template.
+
+    Most distros come from the ``download`` template (``-d/-r/-a``). Distros in
+    :data:`NON_DOWNLOAD_TEMPLATES` are built by their own template, which takes
+    no release/arch arguments.
+    """
+    is_non_download = distro.lower() in NON_DOWNLOAD_TEMPLATES
+    # Non-download templates ignore the release argument and always build the
+    # rolling ``current`` tree, so report that rather than implying the
+    # requested release was honored.
+    effective_release = "current" if is_non_download else release
     description = (
-        f"Creating LXC container template '{name}' ({distro}/{release}/{arch}) "
-        f"in {path}"
+        f"Creating LXC container template '{name}' "
+        f"({distro}/{effective_release}/{arch}) in {path}"
     )
     print(description)
+    if is_non_download and release.lower() not in ("lts", "current"):
+        print(
+            f"WARNING: --release '{release}' ignored for '{distro}': "
+            f"it uses the rolling 'current' tree.",
+            file=sys.stderr,
+        )
     if dry_run:
         return
-    _run(
-        user,
-        [
+    if is_non_download:
+        argv = ["lxc-create", "-n", name, "-P", path, "-t", distro.lower()]
+    else:
+        argv = [
             "lxc-create", "-n", name, "-P", path, "-t", "download", "--",
             "-d", distro, "-r", release, "-a", arch,
-        ],
-    )
+        ]
+    _run(user, argv)
 
 
 def start(
@@ -161,6 +185,56 @@ def execute(
         text=True,
     )
     return proc.returncode, proc.stdout, proc.stderr
+
+
+def attach(
+    name: str,
+    path: str,
+    command: Optional[list[str]] = None,
+    uid: Optional[int] = None,
+    gid: Optional[int] = None,
+    dry_run: bool = False,
+) -> int:
+    """Attach to a container interactively, or run ``command`` inside it.
+
+    Unlike :func:`execute`, stdio is inherited rather than captured: an
+    interactive shell needs a real terminal, and capturing it would leave the
+    caller with a dead tty. Returns the child's exit status.
+
+    ``uid``/``gid`` map to ``lxc-attach --uid``/``--gid`` so the shell can be
+    opened as a non-root user inside the container.
+    """
+    argv = ["lxc-attach", "-n", name, "-P", path]
+    if uid is not None:
+        argv.extend(["--uid", str(uid)])
+    if gid is not None:
+        argv.extend(["--gid", str(gid)])
+    if command:
+        argv.extend(["--", *command])
+    if dry_run:
+        print(f"[dry-run] would attach to container '{name}': {' '.join(argv)}")
+        return 0
+    return subprocess.run(argv).returncode
+
+
+def console(
+    name: str,
+    path: str,
+    tty: Optional[int] = None,
+    dry_run: bool = False,
+) -> int:
+    """Attach to the container's console via ``lxc-console``.
+
+    Requires ``lxc.tty.max`` to be set in the container config; without it
+    there is no tty for ``lxc-console`` to connect to.
+    """
+    argv = ["lxc-console", "-n", name, "-P", path]
+    if tty is not None:
+        argv.extend(["-t", str(tty)])
+    if dry_run:
+        print(f"[dry-run] would open console for '{name}': {' '.join(argv)}")
+        return 0
+    return subprocess.run(argv).returncode
 
 
 

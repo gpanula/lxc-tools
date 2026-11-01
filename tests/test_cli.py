@@ -15,7 +15,7 @@ def test_parse_create_defaults():
     args = parse(["create", "my-app"])
     assert args.command == "create"
     assert args.container_name == "my-app"
-    assert args.distro == "ubuntu"
+    assert args.distro == "voidlinux"
     assert args.dry_run is False
 
 

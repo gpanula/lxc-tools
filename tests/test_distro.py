@@ -65,6 +65,11 @@ def test_unknown_distro_passthrough():
     assert distro.resolve_lts("custom", "lts", run_as_user="alice") == "lts"
 
 
+def test_stage3_distros_match_non_download_templates():
+    """Guard against drift between the two 'not a download distro' sets."""
+    assert distro._STAGE3_DISTROS == lxc_backend.NON_DOWNLOAD_TEMPLATES
+
+
 def test_ubuntu_lts_real_binding(monkeypatch):
     """Regression: lts() returns a str, so slicing must never return a char."""
     import distro_info

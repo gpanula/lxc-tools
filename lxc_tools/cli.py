@@ -9,6 +9,9 @@ from lxc_tools import __version__
 from lxc_tools.commands import KNOWN_ERRORS
 from lxc_tools.commands import create, list as list_cmd
 from lxc_tools.commands import (
+    attach as attach_cmd,
+    console as console_cmd,
+    console_log,
     exec as exec_cmd,
     remove,
     restart,
@@ -51,9 +54,10 @@ def build_parser() -> argparse.ArgumentParser:
     rollback.add_parser(subparsers)
     snapshots.add_parser(subparsers)
     exec_cmd.add_parser(subparsers)
+    attach_cmd.add_parser(subparsers)
+    console_cmd.add_parser(subparsers)
+    console_log.add_parser(subparsers)
     return parser
-
-
 
 
 def main(argv: list[str] | None = None) -> int:

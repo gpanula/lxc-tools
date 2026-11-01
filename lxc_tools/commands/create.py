@@ -10,6 +10,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -21,10 +22,19 @@ from lxc_tools.prereq import require_binaries, require_member_of
 
 _BINARIES = ("lxc-create", "zfs", "newuidmap", "newgidmap")
 
+#: Default distribution for new containers.
+#:
+#: Void Linux is the default because ``runit`` supervises services: sshd is
+#: restarted automatically if it dies, which is the failure mode that
+#: previously left a container unreachable. It is also glibc-based, so native
+#: npm modules and other prebuilt binaries work as they do on Ubuntu.
+DEFAULT_DISTRO = "voidlinux"
+
 #: Distros that boot with systemd as PID 1. For unprivileged containers these
 #: default to the minimal init (``--no-systemd``) because systemd cannot run
 #: when the host cgroup v2 scope does not delegate the memory/pids controllers.
-#: Alpine uses OpenRC and is intentionally excluded.
+#: Alpine (OpenRC), Void (runit) and Gentoo (OpenRC) are intentionally
+#: excluded -- none of them build a cgroup hierarchy.
 SYSTEMD_DISTROS = frozenset({"ubuntu", "debian", "rockylinux", "almalinux"})
 
 #: Path (inside the container rootfs) where the minimal init script is installed
@@ -122,8 +132,9 @@ def _build_provision_script(
 ) -> str:
     """Build the first-boot provisioning shell script.
 
-    The script runs inside the container on first boot (invoked by the minimal
-    init, or a one-shot systemd unit). It is idempotent via a marker file.
+    The script runs inside the container on first boot, invoked by the minimal
+    init script (it is not wired into systemd). It is idempotent via a marker
+    file.
     """
     lines = [
         "#!/bin/sh",
@@ -152,6 +163,14 @@ def _build_provision_script(
             '    apt-get install -y -qq openssh-server >/dev/null 2>&1 || true',
             'elif command -v apk >/dev/null 2>&1; then',
             '    apk add --no-cache openssh >/dev/null 2>&1 || true',
+            'elif command -v xbps-install >/dev/null 2>&1; then',
+            "    # Void: sync the repo index first; xbps-install fails without it.",
+            '    xbps-install -Sy >/dev/null 2>&1 || true',
+            '    xbps-install -y openssh >/dev/null 2>&1 || true',
+            'elif command -v emerge >/dev/null 2>&1; then',
+            "    # Gentoo: the stage3 tarball ships no package database entries.",
+            '    emerge --sync --quiet >/dev/null 2>&1 || true',
+            '    emerge --noreplace net-misc/openssh >/dev/null 2>&1 || true',
             'elif command -v dnf >/dev/null 2>&1; then',
             '    dnf install -y openssh-server >/dev/null 2>&1 || true',
             "fi",
@@ -220,12 +239,30 @@ def _build_provision_script(
     if start_sshd:
         lines += [
             "# --- Start sshd --------------------------------------------------",
+            "# Prefer the native service manager so sshd is *supervised* and",
+            "# restarts if it dies. Falling back to a bare sshd invocation",
+            "# leaves an unsupervised process, which is how a container loses",
+            "# remote access permanently after a crash.",
             'if command -v sshd >/dev/null 2>&1; then',
             "    mkdir -p /run/sshd",
             "    chmod 755 /run/sshd",
             "    ssh-keygen -A >/dev/null 2>&1 || true",
-            "    /usr/sbin/sshd 2>/dev/null || sshd 2>/dev/null || true",
-            '    log "started sshd"',
+            "    if [ -d /var/service ] && command -v sv >/dev/null 2>&1; then",
+            "        # Void/runit: symlink into /var/service and runsvdir supervises it.",
+            "        ln -sfn /etc/sv/sshd /var/service/sshd 2>/dev/null || true",
+            '        log "enabled sshd under runit"',
+            "    elif command -v rc-update >/dev/null 2>&1; then",
+            "        # Gentoo/Alpine OpenRC: add to the default runlevel.",
+            "        rc-update add sshd default >/dev/null 2>&1 || true",
+            "        rc-service sshd start >/dev/null 2>&1 || true",
+            '        log "enabled sshd under OpenRC"',
+            "    elif command -v systemctl >/dev/null 2>&1; then",
+            "        systemctl enable --now sshd >/dev/null 2>&1 || true",
+            '        log "enabled sshd under systemd"',
+            "    else",
+            "        /usr/sbin/sshd 2>/dev/null || sshd 2>/dev/null || true",
+            '        log "started sshd unsupervised (no service manager found)"',
+            "    fi",
             "fi",
             "",
         ]
@@ -259,7 +296,7 @@ def validate_arch_not_quota(arch: str) -> None:
         raise prereq.PrereqError(
             "Error: '<arch>' looks like a quota size, not an architecture.\n"
             "Usage: lxc-tools create <container_name> [distro] [release] [arch] [quota]\n"
-            "Example: lxc-tools create my-app ubuntu lts amd64 64G"
+            "Example: lxc-tools create my-app voidlinux lts amd64 64G"
         )
 
 
@@ -278,8 +315,13 @@ def add_parser(subparsers) -> None:
         help="Name of the container to create.",
     )
     parser.add_argument(
-        "distro", nargs="?", default="ubuntu",
-        help="Distribution name (default: ubuntu).",
+        "distro", nargs="?", default=DEFAULT_DISTRO,
+        help=(
+            f"Distribution name (default: {DEFAULT_DISTRO}). Void Linux is the "
+            "default because its runit init supervises services, so sshd is "
+            "restarted automatically if it dies. Gentoo is supported via its "
+            "stage3 template (rolling, OpenRC)."
+        ),
     )
     parser.add_argument(
         "release", nargs="?", default="lts",
@@ -463,7 +505,7 @@ def run(args) -> int:
         _configure_init(name, lxc_path, mapped_uid, args.dry_run)
     if _has_provisioning(args):
         _configure_provisioning(name, lxc_path, mapped_uid, args, args.dry_run)
-    _print_summary(name, user, cfg.project_dir, lxc_path)
+    _print_summary(name, user, cfg.project_dir)
     return 0
 
 
@@ -478,18 +520,37 @@ def _has_provisioning(args) -> bool:
     )
 
 
+#: Native init system for non-systemd distros, used in the ``--no-systemd``
+#: no-op warning. Unknown distros fall back to a generic description.
+_NATIVE_INIT = {
+    "alpine": "openrc",
+    "voidlinux": "runit",
+    "gentoo": "openrc",
+}
+
+
 def _resolve_no_systemd(args, distro_name: str) -> bool:
     """Resolve whether to use the minimal init for a container.
 
     Precedence:
     1. ``--systemd`` forces systemd (returns False).
-    2. ``--no-systemd`` forces the minimal init (returns True).
+    2. ``--no-systemd`` forces the minimal init (returns True) for systemd
+       distros. For non-systemd distros it is a no-op: the distro's native
+       init is kept and a warning is emitted on stderr.
     3. Otherwise, systemd-based distros default to the minimal init.
     """
     if getattr(args, "systemd", False):
         return False
     if getattr(args, "no_systemd", False):
-        return True
+        if distro_name.lower() in SYSTEMD_DISTROS:
+            return True
+        native = _NATIVE_INIT.get(distro_name.lower(), "its own init system")
+        print(
+            f"WARNING: --no-systemd ignored for '{distro_name}': it uses its "
+            f"own init system ({native}); keeping native init.",
+            file=sys.stderr,
+        )
+        return False
     return distro_name.lower() in SYSTEMD_DISTROS
 
 
@@ -693,14 +754,33 @@ def _configure_init(name, lxc_path, mapped_uid, dry_run) -> None:
         except PermissionError:
             pass
 
-        # Point lxc.init.cmd at the script (idempotent).
+        # Point lxc.init.cmd at the script and capture PID 1 output (idempotent).
+        #
+        # The console keys are what make an init failure diagnosable: without
+        # them a container whose init dies is simply "STOPPED" with no trace.
+        #
+        # ``lxc.console.logfile`` MUST be absolute. A relative value resolves
+        # against the caller's working directory, not the container directory,
+        # so the log would land wherever lxc-start happened to be invoked.
+        #
+        # ``lxc.console.size`` is parsed as a bare byte count unless suffixed
+        # with K/M/G; "4M" is rejected and silently clamped to 4096 bytes.
+        console_log = Path(lxc_path) / name / "console.log"
         content = config_file.read_text(encoding="utf-8")
-        if "lxc.init.cmd" in content:
+        if "lxc.console.logfile" in content:
             return
         with config_file.open("a", encoding="utf-8") as handle:
+            if "lxc.init.cmd" not in content:
+                handle.write(
+                    "\n# Minimal init (--no-systemd): systemd cannot run as PID 1 here\n"
+                    f"lxc.init.cmd = {_INIT_SCRIPT_PATH}\n"
+                )
             handle.write(
-                "\n# Minimal init (--no-systemd): systemd cannot run as PID 1 here\n"
-                f"lxc.init.cmd = {_INIT_SCRIPT_PATH}\n"
+                "\n# Capture PID 1 stdout/stderr so init failures are diagnosable.\n"
+                f"lxc.console.logfile = {console_log}\n"
+                "lxc.console.size = 4096K\n"
+                "lxc.console.rotate = 1\n"
+                "lxc.tty.max = 4\n"
             )
 
     prereq.dry_or(dry_run, "  Installing minimal init script", install)
@@ -726,8 +806,8 @@ def _configure_mac(name, lxc_path, mac, dry_run) -> None:
 def _configure_provisioning(name, lxc_path, mapped_uid, args, dry_run) -> None:
     """Write the first-boot provisioning script into the rootfs.
 
-    The script is invoked by the minimal init on first boot (or a one-shot
-    systemd unit for systemd containers) and performs user/ssh/sudo setup.
+    The script is invoked by the minimal init on first boot (it is not wired
+    into systemd) and performs user/ssh/sudo setup.
     """
     rootfs_path = Path(lxc_path) / name / "rootfs"
     provision_target = rootfs_path / _PROVISION_SCRIPT_PATH.lstrip("/")
@@ -757,12 +837,14 @@ def _configure_provisioning(name, lxc_path, mapped_uid, args, dry_run) -> None:
     prereq.dry_or(dry_run, "  Installing first-boot provisioning script", install)
 
 
-def _print_summary(name, user, project_dir, lxc_path) -> None:
+def _print_summary(name, user, project_dir) -> None:
     print("[7/7] Setup complete!")
     print("-------------------------------------------------------")
     print(f"Container '{name}' is ready.")
     print(f"User:           {user}")
     print(f"Host Path:      {project_dir}/{name}")
     print(f"To start it:    lxc-tools start {name}")
-    print(f"To attach:     sudo lxc-attach -n {name} -P {lxc_path}")
+    print(f"To attach:      lxc-tools attach {name}")
+    print(f"To console:     lxc-tools console {name}")
+    print(f"Console log:    lxc-tools console-log {name}")
 

@@ -51,7 +51,7 @@ FastMCP application exposing tools. Key implementation details:
   - Returns `(returncode, stdout, stderr)`.
   - Maps non-zero exit to a structured error string.
 - Tools (each decorated with `@mcp.tool`):
-  - `create_container(name, distro="ubuntu", release="lts", arch="amd64", quota=None, dry_run=False)`
+  - `create_container(name, distro="voidlinux", release="lts", arch="amd64", quota=None, dry_run=False)`
   - `start_container(name, dry_run=False)`
   - `stop_container(name, kill=False, dry_run=False)`
   - `restart_container(name, dry_run=False)`

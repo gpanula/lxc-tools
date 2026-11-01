@@ -4,6 +4,11 @@
 back to the ``ubuntu-distro-info`` / ``debian-distro-info`` CLIs. ``alpine``,
 ``rockylinux`` and ``almalinux`` resolve to the highest numerical release
 advertised by the LXC download template.
+
+``voidlinux`` is a rolling release with a single ``current`` image, so ``lts``
+resolves to that literal. ``gentoo`` is not in the download index at all -- it
+is built from a stage3 tarball by the ``gentoo`` template, which takes no
+release argument.
 """
 
 from __future__ import annotations
@@ -15,6 +20,15 @@ from lxc_tools import lxc as lxc_backend
 
 _UBUNTU_FALLBACK = "jammy"
 _DEBIAN_FALLBACK = "bookworm"
+
+#: Rolling-release distros that publish exactly one image, named ``current``.
+_ROLLING_CURRENT = frozenset({"voidlinux"})
+
+#: Distros built from a stage3 tarball rather than the download index. The
+#: template ignores the release argument, so ``lts`` resolves to ``current``.
+#: Derived from :data:`lxc_tools.lxc.NON_DOWNLOAD_TEMPLATES` (this module already
+#: imports the backend) so the two sets cannot drift.
+_STAGE3_DISTROS = lxc_backend.NON_DOWNLOAD_TEMPLATES
 
 
 def _run_cli(cli: str, args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -75,6 +89,8 @@ def resolve_lts(
     elif distro in ("alpine", "rockylinux", "almalinux"):
         releases = lxc_backend.list_download_releases(distro, user=run_as_user)
         resolved = max(releases, key=_version_key) if releases else "latest"
+    elif distro in _ROLLING_CURRENT or distro in _STAGE3_DISTROS:
+        resolved = "current"
     else:
         resolved = release
 

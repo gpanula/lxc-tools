@@ -68,6 +68,31 @@ def test_run_cli_ok(fake_cli):
     assert fake_cli == [["/usr/local/bin/lxc-tools", "list"]]
 
 
+def test_summary_success_includes_stdout_and_stderr():
+    result = mcp_server.CommandResult(0, "created\n", "WARNING: ignored\n")
+    summary = result.summary()
+    assert "created" in summary
+    assert "WARNING: ignored" in summary
+    assert summary == "created\n\nWARNING: ignored"
+
+
+def test_summary_success_stdout_only_unchanged():
+    result = mcp_server.CommandResult(0, "ok\n", "")
+    assert result.summary() == "ok"
+
+
+def test_summary_success_stderr_only():
+    result = mcp_server.CommandResult(0, "", "WARNING: ignored\n")
+    assert result.summary() == "WARNING: ignored"
+
+
+def test_summary_failure_surfaces_stderr():
+    result = mcp_server.CommandResult(1, "", "boom\n")
+    summary = result.summary()
+    assert "Error (exit 1)" in summary
+    assert "boom" in summary
+
+
 def test_run_cli_error_renders_exit_code(fake_cli):
     fake_cli.clear()
     mcp_server.subprocess.run = lambda argv, **kw: FakeProc(
@@ -83,8 +108,15 @@ def test_create_container_defaults(fake_cli):
     out = create_container("my-app")
     assert out == "ok"
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64"]
     ]
+
+
+def test_create_container_default_distro_is_voidlinux():
+    import inspect
+
+    sig = inspect.signature(create_container)
+    assert sig.parameters["distro"].default == "voidlinux"
 
 
 def test_create_container_full_args(fake_cli):
@@ -105,35 +137,35 @@ def test_create_container_quota_without_arch(fake_cli):
 def test_create_container_dry_run(fake_cli):
     create_container("my-app", dry_run=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--dry-run"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "--dry-run"]
     ]
 
 
 def test_create_container_no_systemd(fake_cli):
     create_container("my-app", no_systemd=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--no-systemd"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "--no-systemd"]
     ]
 
 
 def test_create_container_no_systemd_with_quota(fake_cli):
     create_container("my-app", quota="20G", no_systemd=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "20G", "--no-systemd"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "20G", "--no-systemd"]
     ]
 
 
 def test_create_container_systemd(fake_cli):
     create_container("my-app", systemd=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--systemd"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "--systemd"]
     ]
 
 
 def test_create_container_systemd_overrides_no_systemd(fake_cli):
     create_container("my-app", no_systemd=True, systemd=True)
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64", "--systemd"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64", "--systemd"]
     ]
 
 
@@ -142,7 +174,7 @@ def test_create_container_auto_default_no_flag(fake_cli):
     # the default from the distro.
     create_container("my-app")
     assert fake_cli == [
-        ["/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64"]
+        ["/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64"]
     ]
 
 
@@ -159,7 +191,7 @@ def test_create_container_provisioning_flags(fake_cli):
     )
     assert fake_cli == [
         [
-            "/usr/local/bin/lxc-tools", "create", "my-app", "ubuntu", "lts", "amd64",
+            "/usr/local/bin/lxc-tools", "create", "my-app", "voidlinux", "lts", "amd64",
             "--mac", "02:16:3e:aa:bb:cc",
             "--install-sshd",
             "--start-sshd",
