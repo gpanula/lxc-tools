@@ -32,3 +32,6 @@ build/
 
 # graphify knowledge graph outputs (rebuilt by .githooks/post-commit)
 graphify-out/
+
+# Local scratch workspace (throwaway scripts, logs, bundles)
+scratch/
