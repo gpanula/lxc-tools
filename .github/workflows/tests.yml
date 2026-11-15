@@ -28,11 +28,12 @@ jobs:
           cache: pip
 
       - name: Install package and test dependencies
-        # The suite is pure-logic: no native ZFS/LXC/ACL bindings needed,
-        # so the `test` extra alone is sufficient.
+        # The suite is pure-logic: no native ZFS/LXC/ACL bindings needed.
+        # The `mcp` extra is required because tests/test_mcp_server.py imports
+        # fastmcp at module scope; without it collection fails.
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e ".[test]"
+          python -m pip install -e ".[test,mcp]"
 
       - name: Run tests
         run: python -m pytest tests/ -q -p no:cacheprovider
