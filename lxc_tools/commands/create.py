@@ -505,6 +505,14 @@ def run(args) -> int:
         _configure_init(name, lxc_path, mapped_uid, args.dry_run)
     if _has_provisioning(args):
         _configure_provisioning(name, lxc_path, mapped_uid, args, args.dry_run)
+        # Non-systemd distros (Void/runit, Alpine/Gentoo/OpenRC) keep their
+        # native init as PID 1, so the minimal init that normally invokes the
+        # provisioning script is never installed. Wire the script into the
+        # native service manager instead, or it would never run.
+        if not _resolve_no_systemd(args, distro_name):
+            _configure_native_provisioning(
+                name, lxc_path, mapped_uid, distro_name, args.dry_run
+            )
     _print_summary(name, user, cfg.project_dir)
     return 0
 
@@ -835,6 +843,103 @@ def _configure_provisioning(name, lxc_path, mapped_uid, args, dry_run) -> None:
             pass
 
     prereq.dry_or(dry_run, "  Installing first-boot provisioning script", install)
+
+
+#: runit service directory (Void) for the first-boot provisioning oneshot.
+_RUNIT_SERVICE_DIR = "/etc/sv/lxc-tools-provision"
+_RUNIT_SERVICE_LINK = "/var/service/lxc-tools-provision"
+
+#: OpenRC init script (Alpine, Gentoo) for the first-boot provisioning oneshot.
+_OPENRC_INIT_SCRIPT = "/etc/init.d/lxc-tools-provision"
+
+_RUNIT_RUN_SCRIPT = """#!/bin/sh
+# One-shot: run first-boot provisioning, then stay up so runit does not
+# restart it. The provisioning script is marker-guarded and idempotent.
+exec 2>&1
+/usr/local/sbin/lxc-tools-provision.sh
+exec sleep infinity
+"""
+
+_OPENRC_INIT_SCRIPT_BODY = """#!/sbin/openrc-run
+# One-shot: run first-boot provisioning. The script is marker-guarded and
+# idempotent, so re-running on later boots is harmless.
+description="lxc-tools first-boot provisioning"
+
+depend() {
+    after net
+}
+
+start() {
+    ebegin "Running lxc-tools first-boot provisioning"
+    /usr/local/sbin/lxc-tools-provision.sh
+    eend $?
+}
+"""
+
+
+def _configure_native_provisioning(
+    name, lxc_path, mapped_uid, distro_name, dry_run
+) -> None:
+    """Wire the provisioning script into a non-systemd distro's native init.
+
+    The minimal init (``--no-systemd``) invokes the provisioning script on
+    first boot, but non-systemd distros keep their own init as PID 1 and never
+    install that init. Without this, the script is written into the rootfs but
+    nothing ever runs it, so the user/sshd/sudo setup silently never happens.
+
+    Installs a oneshot service for the distro's service manager:
+    - runit (Void): ``/etc/sv/lxc-tools-provision/run`` + ``/var/service`` link.
+    - OpenRC (Alpine, Gentoo): ``/etc/init.d/lxc-tools-provision`` + default
+      runlevel link.
+    """
+    rootfs_path = Path(lxc_path) / name / "rootfs"
+    native = _NATIVE_INIT.get(distro_name.lower())
+    print(f"[6/7] Wiring provisioning into native init ({native or 'unknown'})")
+
+    def install() -> None:
+        if not rootfs_path.is_dir():
+            raise prereq.PrereqError(f"Error: Container rootfs not found at {rootfs_path}")
+
+        if native == "runit":
+            service_dir = rootfs_path / _RUNIT_SERVICE_DIR.lstrip("/")
+            service_dir.mkdir(parents=True, exist_ok=True)
+            run_script = service_dir / "run"
+            run_script.write_text(_RUNIT_RUN_SCRIPT, encoding="utf-8")
+            run_script.chmod(0o755)
+            # Enable by symlinking into /var/service (runsvdir supervises it).
+            link = rootfs_path / _RUNIT_SERVICE_LINK.lstrip("/")
+            link.parent.mkdir(parents=True, exist_ok=True)
+            if not link.exists():
+                link.symlink_to(_RUNIT_SERVICE_DIR)
+            targets = [run_script]
+        elif native == "openrc":
+            init_script = rootfs_path / _OPENRC_INIT_SCRIPT.lstrip("/")
+            init_script.parent.mkdir(parents=True, exist_ok=True)
+            init_script.write_text(_OPENRC_INIT_SCRIPT_BODY, encoding="utf-8")
+            init_script.chmod(0o755)
+            # Enable in the default runlevel.
+            runlevel = rootfs_path / "etc/runlevels/default/lxc-tools-provision"
+            runlevel.parent.mkdir(parents=True, exist_ok=True)
+            if not runlevel.exists():
+                runlevel.symlink_to(_OPENRC_INIT_SCRIPT)
+            targets = [init_script]
+        else:
+            # Unknown native init: nothing safe to wire up. The script is still
+            # installed and can be run manually.
+            print(
+                f"WARNING: no native-init wiring for '{distro_name}'; run "
+                f"{_PROVISION_SCRIPT_PATH} manually inside the container.",
+                file=sys.stderr,
+            )
+            return
+
+        for target in targets:
+            try:
+                os.chown(target, mapped_uid, mapped_uid)
+            except PermissionError:
+                pass
+
+    prereq.dry_or(dry_run, "  Wiring provisioning into native init", install)
 
 
 def _print_summary(name, user, project_dir) -> None:

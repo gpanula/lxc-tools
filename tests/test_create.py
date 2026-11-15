@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import collections
+import os
+
 import pytest
 
 from lxc_tools.commands.create import (
@@ -13,6 +15,7 @@ from lxc_tools.commands.create import (
     _check_disk_space,
     _configure_init,
     _configure_mac,
+    _configure_native_provisioning,
     _configure_provisioning,
     _ensure_project_dir,
     _format_bytes,
@@ -378,6 +381,60 @@ def test_configure_provisioning_writes_script(tmp_path):
     content = target.read_text(encoding="utf-8")
     assert 'useradd -m -s /bin/bash "dev"' in content
     assert target.stat().st_mode & 0o111
+
+
+def test_configure_native_provisioning_runit(tmp_path):
+    """Void/runit: install a oneshot service and enable it in /var/service."""
+    name = "my-app"
+    lxc_path = tmp_path / "lxc"
+    rootfs = lxc_path / name / "rootfs"
+    rootfs.mkdir(parents=True)
+
+    _configure_native_provisioning(name, str(lxc_path), 100000, "voidlinux", dry_run=False)
+
+    run_script = rootfs / "etc/sv/lxc-tools-provision/run"
+    assert run_script.is_file()
+    assert run_script.stat().st_mode & 0o111
+    assert "/usr/local/sbin/lxc-tools-provision.sh" in run_script.read_text(encoding="utf-8")
+
+    link = rootfs / "var/service/lxc-tools-provision"
+    assert link.is_symlink()
+    # The link target is absolute *inside the container* (runsvdir resolves it
+    # there), so compare the raw target rather than resolving on the host.
+    assert os.readlink(link) == "/etc/sv/lxc-tools-provision"
+
+
+def test_configure_native_provisioning_openrc(tmp_path):
+    """Alpine/Gentoo: install an OpenRC init script and enable it."""
+    name = "my-app"
+    lxc_path = tmp_path / "lxc"
+    rootfs = lxc_path / name / "rootfs"
+    rootfs.mkdir(parents=True)
+
+    _configure_native_provisioning(name, str(lxc_path), 100000, "alpine", dry_run=False)
+
+    init_script = rootfs / "etc/init.d/lxc-tools-provision"
+    assert init_script.is_file()
+    assert init_script.stat().st_mode & 0o111
+    assert "/usr/local/sbin/lxc-tools-provision.sh" in init_script.read_text(encoding="utf-8")
+
+    runlevel = rootfs / "etc/runlevels/default/lxc-tools-provision"
+    assert runlevel.is_symlink()
+
+
+def test_configure_native_provisioning_unknown_distro_warns(tmp_path, capsys):
+    """Unknown native init: warn and install nothing."""
+    name = "my-app"
+    lxc_path = tmp_path / "lxc"
+    rootfs = lxc_path / name / "rootfs"
+    rootfs.mkdir(parents=True)
+
+    _configure_native_provisioning(name, str(lxc_path), 100000, "weirdos", dry_run=False)
+
+    captured = capsys.readouterr()
+    assert "no native-init wiring" in captured.err
+    assert not (rootfs / "etc/sv/lxc-tools-provision").exists()
+    assert not (rootfs / "etc/init.d/lxc-tools-provision").exists()
 
 
 

@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # Git pre-commit hook
-# Prevents direct commits to the 'main' branch to enforce branch hygiene.
+# 1. Prevents direct commits to the 'main' branch to enforce branch hygiene.
+# 2. Runs the test suite so a broken commit never lands.
+#
+# Escape hatches:
+#   ALLOW_MAIN_COMMIT=1 git commit ...   allow a commit on main
+#   SKIP_TESTS=1 git commit ...          skip the test run (WIP commits)
 
-branch="$(git symbolic-ref --short HEAD 2>/dev/null)"
+set -euo pipefail
+trap 'echo "❌ [ERROR] pre-commit failed on line ${LINENO} executing: ${BASH_COMMAND}" >&2; exit 1' ERR
+
+branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 
 if [ "$branch" = "main" ]; then
-    if [ "$ALLOW_MAIN_COMMIT" != "1" ]; then
+    if [ "${ALLOW_MAIN_COMMIT:-}" != "1" ]; then
         echo "⛔ [Branch Guard] Direct commits to the 'main' branch are prohibited!"
         echo "   Please create a feature branch before committing:"
         echo "     git checkout -b feat/<your-topic>"
@@ -13,5 +21,47 @@ if [ "$branch" = "main" ]; then
         exit 1
     fi
 fi
+
+# --- Test gate ------------------------------------------------------------
+if [ "${SKIP_TESTS:-}" = "1" ]; then
+    echo "⏭️  [Tests] SKIP_TESTS=1 — skipping the test suite."
+    exit 0
+fi
+
+# Resolve an interpreter that has pytest. The project venv is the documented
+# location; system python3 usually has no pytest, so it is only a last resort.
+PYTHON=""
+for candidate in ".venv/bin/python" "venv/bin/python"; do
+    if [ -x "$candidate" ] && "$candidate" -c "import pytest" 2>/dev/null; then
+        PYTHON="$candidate"
+        break
+    fi
+done
+if [ -z "$PYTHON" ]; then
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1 \
+            && "$candidate" -c "import pytest" 2>/dev/null; then
+            PYTHON="$(command -v "$candidate")"
+            break
+        fi
+    done
+fi
+
+if [ -z "$PYTHON" ]; then
+    echo "⛔ [Tests] No Python interpreter with pytest found." >&2
+    echo "   Create the venv and install test deps:" >&2
+    echo "     python3 -m venv .venv && .venv/bin/pip install -e '.[test]'" >&2
+    echo "   Or skip this gate for a WIP commit: SKIP_TESTS=1 git commit ..." >&2
+    exit 1
+fi
+
+echo "🧪 [Tests] running suite with $PYTHON ..."
+if ! "$PYTHON" -m pytest tests/ -q -p no:cacheprovider; then
+    echo "" >&2
+    echo "⛔ [Tests] Test suite failed — commit blocked." >&2
+    echo "   Fix the failures, or skip for a WIP commit: SKIP_TESTS=1 git commit ..." >&2
+    exit 1
+fi
+echo "✅ [Tests] suite passed."
 
 exit 0

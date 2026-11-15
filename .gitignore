@@ -29,3 +29,6 @@ build/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# graphify knowledge graph outputs (rebuilt by .githooks/post-commit)
+graphify-out/

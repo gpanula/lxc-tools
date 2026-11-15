@@ -20,6 +20,7 @@
 ## 3. Safety & Verification Standards
 * **Linux SysAdmin**: Always prefer dry-runs / check-mode / non-destructive inspection before applying changes.
 * **Rollbacks & State**: Preserve file states and track changes cleanly.
+* **Tests Must Pass**: [`.githooks/pre-commit`](./.githooks/pre-commit) runs the full suite and blocks the commit on failure. The suite is pure-logic (no root, no ZFS/LXC/ACL bindings) and runs in under a second. Run it directly with `.venv/bin/python -m pytest tests/ -q`; system `python3` has no pytest. For a WIP commit, bypass with `SKIP_TESTS=1 git commit ...`. CI ([`.github/workflows/tests.yml`](./.github/workflows/tests.yml)) runs the same suite on Python 3.10 and 3.12 and cannot be bypassed.
 * **Defensive Scripting & Error Traps**: All shell scripts in this repository must implement strict defensive error handling:
   * Strict error headers: `set -euo pipefail`
   * Error trap diagnostics: `trap 'echo "❌ [ERROR] Script failed on line ${LINENO} executing: ${BASH_COMMAND}" >&2; exit 1' ERR`
@@ -37,3 +38,19 @@
 ## 5. Command Brevity & Permission Review Readability
 * **Concise Shell Commands**: Avoid long, multi-line inline scripts (such as `python3 -c '...'` or embedded multi-line string blobs) in proposed tool commands to keep permission dialogs easy to review.
 * **Script Encapsulation**: Encapsulate non-trivial Python or shell logic into dedicated scripts and invoke them with short, clear command lines (e.g. `python3 scripts/helper.py <subcommand> [args]`).
+
+## 6. Knowledge Graph (graphify)
+This repository maintains a persistent knowledge graph of its own codebase via [graphify](https://github.com/Graphify-Labs/graphify). Outputs live in `graphify-out/` (git-ignored).
+
+* **Fresh clone setup**: run `scripts/graphify_setup.sh` once. It installs the hooks, records the graphify interpreter in `graphify-out/.graphify_python`, and seeds the initial graph. Idempotent — re-run it any time to refresh. `--check` reports state without changing anything; `--hooks-only` skips the graph build.
+* **Query before exploring**: For questions about architecture, file relationships, or "how does X work", query the graph first instead of grepping the tree:
+  * `graphify query "<question>"` — BFS traversal, broad context
+  * `graphify query "<question>" --dfs` — trace a specific path
+  * `graphify path "A" "B"` — shortest path between two concepts
+  * `graphify explain "<node>"` — plain-language explanation of a node and its neighbours
+  * `graphify god-nodes` — most connected architectural hubs
+* **Auto-rebuild**: `.githooks/post-commit`, `post-checkout`, `post-merge`, and `post-rewrite` rebuild the graph in the background after each commit/branch switch/merge/rebase (code files only, no LLM, no API key). Rebuild logs: `~/.cache/graphify-rebuild.log`.
+* **Manual rebuild**: `graphify update .` after large refactors; `graphify extract . --code-only` for a full re-scan.
+* **Opt out per command**: `GRAPHIFY_SKIP_HOOK=1 git commit ...` skips the background rebuild.
+* **Hook management**: `graphify hook status` / `graphify hook install` / `graphify hook uninstall`.
+* **Merge driver**: `graphify hook install` registered a `merge=graphify` union merge driver for `graphify-out/graph.json` (see `.gitattributes`). The driver command is stored in local git config (`.git/config`, not committed) and resolves `graphify` from `PATH`; if it ever fails, re-run `graphify hook install` from a shell where `graphify` is on `PATH`.
