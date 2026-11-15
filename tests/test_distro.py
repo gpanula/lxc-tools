@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from lxc_tools import distro
 from lxc_tools import lxc as lxc_backend
 
@@ -72,7 +74,9 @@ def test_stage3_distros_match_non_download_templates():
 
 def test_ubuntu_lts_real_binding(monkeypatch):
     """Regression: lts() returns a str, so slicing must never return a char."""
-    import distro_info
+    distro_info = pytest.importorskip(
+        "distro_info", reason="python3-distro-info not installed"
+    )
 
     monkeypatch.setattr(
         distro, "_ubuntu_lts_python", lambda: distro_info.UbuntuDistroInfo().lts()
