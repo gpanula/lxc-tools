@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Git pre-commit hook
-# 1. Prevents direct commits to the 'main' branch to enforce branch hygiene.
+# 1. Prevents direct commits to the 'trunk' branch to enforce branch hygiene.
 # 2. Runs the test suite so a broken commit never lands.
 #
 # Escape hatches:
-#   ALLOW_MAIN_COMMIT=1 git commit ...   allow a commit on main
+#   ALLOW_MAIN_COMMIT=1 git commit ...   allow a commit on trunk
 #   SKIP_TESTS=1 git commit ...          skip the test run (WIP commits)
 
 set -euo pipefail
@@ -12,9 +12,9 @@ trap 'echo "❌ [ERROR] pre-commit failed on line ${LINENO} executing: ${BASH_CO
 
 branch="$(git symbolic-ref --short HEAD 2>/dev/null || true)"
 
-if [ "$branch" = "main" ]; then
+if [ "$branch" = "trunk" ]; then
     if [ "${ALLOW_MAIN_COMMIT:-}" != "1" ]; then
-        echo "⛔ [Branch Guard] Direct commits to the 'main' branch are prohibited!"
+        echo "⛔ [Branch Guard] Direct commits to the 'trunk' branch are prohibited!"
         echo "   Please create a feature branch before committing:"
         echo "     git checkout -b feat/<your-topic>"
         echo "   (To override in an absolute emergency: ALLOW_MAIN_COMMIT=1 git commit ...)"

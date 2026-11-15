@@ -1,7 +1,7 @@
 # Agent Workspace Rules
 
 ## 1. Branching & Workflow Standards
-* **No Direct Commits to `main`**: Never commit directly to the `main` branch. All work must be conducted on dedicated feature or task branches.
+* **No Direct Commits to `trunk`**: Never commit directly to the `trunk` branch. All work must be conducted on dedicated feature or task branches.
 * **Branch Naming Standard**:
   * `feat/<topic>` — New features, configurations, or modules (e.g., `feat/zfs-snapshot-schedule`)
   * `fix/<topic>` — Bug fixes, syntax corrections, or troubleshooting (e.g., `fix/subuid-map-validation`)

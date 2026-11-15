@@ -7,8 +7,8 @@ To maintain a clean, stable, and bisectable repository, all contributors and AI 
 ## 🌿 1. Branching & PR Workflow
 
 ### Branch Rules
-* **Direct commits to `main` are prohibited.** All work must be developed on a dedicated branch and merged via Pull Request.
-* A local `.githooks/pre-commit` hook guards against accidental commits on `main`.
+* **Direct commits to `trunk` are prohibited.** All work must be developed on a dedicated branch and merged via Pull Request.
+* A local `.githooks/pre-commit` hook guards against accidental commits on `trunk`.
 
 ### Branch Naming Conventions
 Use descriptive prefixes for all branch names:
@@ -61,7 +61,7 @@ Every commit message must begin with a valid **Gitmoji** (either the Unicode emo
 
 ## ⚙️ 4. Automated Verification
 
-* **Pre-commit Hook**: Blocks direct commits on `main` (`.githooks/pre-commit`).
+* **Pre-commit Hook**: Blocks direct commits on `trunk` (`.githooks/pre-commit`).
 * **Commit-msg Hook**: Validates Gitmoji prefix format on every commit (`.githooks/commit-msg`).
 * **GitHub Actions CI**: Validates all incoming PRs and commits against the Gitmoji standard (`.github/workflows/gitmoji-check.yml`).
 

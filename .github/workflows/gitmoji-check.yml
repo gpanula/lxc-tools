@@ -2,9 +2,9 @@ name: Gitmoji Commit Lint
 
 on:
   push:
-    branches: [main]
+    branches: [trunk]
   pull_request:
-    branches: [main]
+    branches: [trunk]
 
 jobs:
   validate-gitmoji:
