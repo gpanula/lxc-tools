@@ -154,19 +154,48 @@ def ensure_user_acl(path: Path, uid: int, perms: str = "rwx") -> None:
 
 
 def set_user_acl_recursive(root: Path, uid: int, perms: str = "rwx") -> None:
-    """Apply an access ACL to ``root`` and every entry beneath it."""
+    """Apply an access ACL to ``root`` and every entry beneath it.
+
+    Symlinks are skipped: POSIX ACLs cannot be applied to a symlink itself
+    (``applyto`` raises ``EINVAL``), and following them risks touching files
+    outside the tree. Per-entry failures are tolerated so one unreadable or
+    special file cannot abort the whole walk.
+    """
     for current, _dirs, files in os.walk(root):
-        ensure_user_acl(Path(current), uid, perms)
+        _try_ensure_user_acl(Path(current), uid, perms)
         for name in files:
-            ensure_user_acl(Path(current) / name, uid, perms)
+            path = Path(current) / name
+            if path.is_symlink():
+                continue
+            _try_ensure_user_acl(path, uid, perms)
 
 
 def set_default_acl_recursive(root: Path, uid: int, perms: str = "rwx") -> None:
-    """Apply a default ACL to every directory beneath (and including) ``root``."""
+    """Apply a default ACL to every directory beneath (and including) ``root``.
+
+    Symlinks are skipped for the same reason as :func:`set_user_acl_recursive`.
+    """
     for current, dirs, _files in os.walk(root):
-        _ensure_default_acl(Path(current), uid, perms)
+        _try_ensure_default_acl(Path(current), uid, perms)
         for name in dirs:
-            _ensure_default_acl(Path(current) / name, uid, perms)
+            path = Path(current) / name
+            if path.is_symlink():
+                continue
+            _try_ensure_default_acl(path, uid, perms)
+
+
+def _try_ensure_user_acl(path: Path, uid: int, perms: str) -> None:
+    try:
+        ensure_user_acl(path, uid, perms)
+    except (OSError, ACLError):
+        pass
+
+
+def _try_ensure_default_acl(path: Path, uid: int, perms: str) -> None:
+    try:
+        _ensure_default_acl(path, uid, perms)
+    except (OSError, ACLError):
+        pass
 
 
 def _ensure_default_acl(path: Path, uid: int, perms: str = "rwx") -> None:
