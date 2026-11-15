@@ -77,7 +77,6 @@ def _cmd_slug(cmd_args: list[str]) -> str:
 
 @guarded
 def run(args) -> int:
-    prereq.ensure_root_or_reexec()
     user = prereq.resolve_current_user()
     require_member_of(user)
     require_binaries(_BINARIES)
@@ -91,8 +90,15 @@ def run(args) -> int:
         raise prereq.PrereqError("Error: No command specified to execute.")
 
     # Locate the container and assert it is running.
+    #
+    # Unprivileged containers are owned by the invoking user, so lxc-attach and
+    # the delegated ZFS snapshot both work without root. Only privileged
+    # containers (in cfg.priv_path) require elevation, so re-exec through sudo
+    # only in that case. This keeps `exec` (and the git-server helper actions
+    # built on it) password-free for the common unprivileged case.
     path = resolve_running_container(cfg, name, user)
     if path == cfg.priv_path:
+        prereq.ensure_root_or_reexec()
         dataset = f"{cfg.zfs_pool}/lxc/privileged/{name}"
     else:
         owner = Path(path).name
